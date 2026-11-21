@@ -78,6 +78,7 @@ constexpr int64_t kStuckRawReleasedMs = 1500;
 constexpr int64_t kStuckFrameworkReleasedMs = 3000;
 constexpr int64_t kMaxFingerDownMs = 10000;
 constexpr int kWatchdogPollMs = 500;
+constexpr int64_t kLhbmRecheckMs = 150;
 // Only used when the display driver does not deliver power events.
 constexpr int kFallbackScreenPollMs = 1000;
 
@@ -166,7 +167,17 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
         LOG(INFO) << __func__;
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
+            if (mFingerDown && mDeferredUp) {
+                // New tap while the previous one is still waiting for its
+                // release: finish that one so the HAL gets a clean up/down.
+                LOG(INFO) << "New touch during a deferred up; closing the previous one";
+                endFingerDownLocked();
+            }
             mDeferredUp = false;
+        }
+        syncHalFingerState();
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
             // fpc_fod does not reliably send the "waiting for finger" message.
             if (isFpcFod) setFodStatus(FOD_STATUS_ON);
             beginFingerDownLocked(Source::FRAMEWORK);
@@ -279,6 +290,8 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
 
     std::mutex touch_mutex_;
     std::mutex disp_mutex_;
+    std::atomic<bool> mLhbmOn{false};  // last local HBM request
+    std::atomic<int64_t> mLhbmRecheckMs{0};  // when to repeat HBM-off, 0 = none
 
     std::thread rawThread_;
     std::thread dispThread_;
@@ -325,6 +338,8 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
         if (mFingerDown) {
             // e.g. raw press first, then the framework sees the same touch.
             if (source == Source::FRAMEWORK) mSource = source;
+            // GOOD may have switched the local HBM off already.
+            if (!mLhbmOn) setLocalHbm(true);
             return;
         }
         mFingerDown = true;
@@ -342,6 +357,10 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
         mFingerDownWanted.store(false);
         setTouchFingerDown(false);
         setLocalHbm(false);
+        // Repeat the HBM-off once shortly after: an "off" that lands while
+        // the panel is still switching local HBM on can be lost.
+        mLhbmRecheckMs.store(nowMs() + kLhbmRecheckMs);
+        kickRawThread();
         return true;
     }
 
@@ -449,6 +468,7 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
                 consider(firstPressMs + kPressConfirmMs - now);
             }
             if (releaseDeadline) consider(releaseDeadline - now);
+            if (int64_t r = mLhbmRecheckMs.load()) consider(r - now);
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
                 if (mFingerDown) consider(kWatchdogPollMs);
@@ -510,6 +530,13 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
                     mRawReleasedMs.store(now);
                     onRawReleased();
                 }
+            }
+
+            // Repeated HBM-off (see endFingerDownLocked).
+            if (int64_t r = mLhbmRecheckMs.load(); r && now >= r) {
+                mLhbmRecheckMs.store(0);
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                if (!mFingerDown) setLocalHbm(false);
             }
 
             runWatchdog(now);
@@ -641,6 +668,7 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
 
     void setLocalHbm(bool on) {
         std::lock_guard<std::mutex> lock(disp_mutex_);
+        mLhbmOn = on;
         if (disp_fd_.get() < 0) return;
         disp_local_hbm_req req;
         req.base.flag = 0;
