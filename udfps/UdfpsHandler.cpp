@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2024 The LineageOS Project
+ * Copyright (C) 2024-2026 The LineageOS Project
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -11,16 +11,21 @@
 #include <android-base/properties.h>
 #include <android-base/unique_fd.h>
 
-#include <poll.h>
-#include <sys/ioctl.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/eventfd.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <thread>
 
 #include <display/drm/mi_disp.h>
@@ -39,176 +44,162 @@
 #define FOD_STATUS_OFF 0
 #define FOD_STATUS_ON 1
 
-// ANTI-FALSO POSITIVO (PRESS): el nodo crudo fod_press_status se dispara
-// con cualquier toque en la zona del sensor, incluso un simple roce/deslizar
-// sin intencion real de desbloquear. Antes de confiar en un "pressed",
-// se re-muestrea varias veces seguidas para confirmar que el dedo se
-// mantiene quieto ahi, evitando que un roce encienda el HBM.
-#define RAW_PRESS_CONFIRM_SAMPLES 3
-#define RAW_PRESS_CONFIRM_INTERVAL_MS 20
-
 #define TOUCH_DEV_PATH "/dev/xiaomi-touch"
 #define TOUCH_MAGIC 'T'
 #define TOUCH_IOC_SET_CUR_VALUE _IO(TOUCH_MAGIC, SET_CUR_VALUE)
-#define TOUCH_IOC_GET_CUR_VALUE _IO(TOUCH_MAGIC, GET_CUR_VALUE)
 
 #define DISP_FEATURE_PATH "/dev/mi_display/disp_feature"
 #define FOD_PRESS_STATUS_PATH "/sys/class/touch/touch_dev/fod_press_status"
 #define BRIGHTNESS_PATH "/sys/class/backlight/panel0-backlight/brightness"
 
+// Screen-off unlock toggle (default on). Nothing in the tree writes it; a ROM
+// can mirror the Settings toggle into it.
+#define PROP_SCREEN_OFF "persist.vendor.sys.fp.screen_off"
+// Also send raw presses to the HAL while the panel is fully off (not dozing).
+// Off by default: with the panel off the sensor area cannot be lit, so these
+// attempts only end in "Up too fast". Kept as a switch for testing.
+#define PROP_SCREEN_OFF_DIRECT "persist.vendor.udfps.screen_off_direct"
+
 using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
 namespace {
 
-static bool readBool(int fd) {
-    char c;
-    int rc;
+// fod_press_status is pulse-like: while a finger rests on the sensor it can
+// drop to 0 for 20-200 ms. A press counts once the node has been seen high
+// for kPressConfirmMs; a release counts only after the node stayed low for
+// kReleaseHoldMs.
+constexpr int64_t kPressConfirmMs = 40;
+constexpr int64_t kReleaseHoldMs = 150;
+// A framework "up" this soon after "down" while the sensor still sees the
+// finger is treated as a bounce and deferred to the raw release.
+constexpr int64_t kFrameworkUpBounceMs = 250;
+// Safety net for a finger-down state nobody clears (e.g. lockout).
+constexpr int64_t kStuckRawReleasedMs = 1500;
+constexpr int64_t kStuckFrameworkReleasedMs = 3000;
+constexpr int64_t kMaxFingerDownMs = 10000;
+constexpr int kWatchdogPollMs = 500;
+// Only used when the display driver does not deliver power events.
+constexpr int kFallbackScreenPollMs = 1000;
 
-    rc = pread(fd, &c, sizeof(char), 0);
+int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+}
+
+bool readBool(int fd) {
+    char c;
+    int rc = pread(fd, &c, sizeof(char), 0);
     if (rc != 1) {
         LOG(ERROR) << "failed to read bool from fd, err: " << rc;
         return false;
     }
-
     return c != '0';
 }
 
-static disp_event_resp* parseDispEvent(int fd) {
-    static char event_data[1024];
-    ssize_t size;
+int readBrightness() {
+    android::base::unique_fd fd(open(BRIGHTNESS_PATH, O_RDONLY | O_CLOEXEC));
+    if (fd.get() < 0) return -1;
+    char buf[12];
+    ssize_t len = read(fd.get(), buf, sizeof(buf) - 1);
+    if (len <= 0) return -1;
+    buf[len] = '\0';
+    return atoi(buf);
+}
 
-    memset(event_data, 0, sizeof(event_data));
-    size = read(fd, event_data, sizeof(event_data));
-    if (size < 0) {
-        LOG(ERROR) << "read fod event failed";
-        return nullptr;
+bool isScreenOn(int state) {
+    return state == MI_DISP_POWER_ON;
+}
+
+bool isDoze(int state) {
+    return state == MI_DISP_POWER_LP1 || state == MI_DISP_POWER_LP2;
+}
+
+const char* powerName(int state) {
+    switch (state) {
+        case MI_DISP_POWER_ON: return "on";
+        case MI_DISP_POWER_LP1: return "doze(lp1)";
+        case MI_DISP_POWER_LP2: return "doze(lp2)";
+        case MI_DISP_POWER_STANDBY: return "standby";
+        case MI_DISP_POWER_SUSPEND: return "suspend";
+        case MI_DISP_POWER_OFF: return "off";
+        default: return "unknown";
     }
-
-    if (size < (ssize_t)sizeof(struct disp_event)) {
-        LOG(ERROR) << "Invalid event size " << size << ", expect at least "
-                   << sizeof(struct disp_event);
-        return nullptr;
-    }
-
-    return reinterpret_cast<disp_event_resp*>(event_data);
 }
 
 }  // anonymous namespace
 
 class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
   public:
-    XiaomiSm6225UdfpsHandler() : mDevice(nullptr), isFpcFod(false) {}
+    ~XiaomiSm6225UdfpsHandler() override { shutdownThreads(); }
 
-    ~XiaomiSm6225UdfpsHandler() {
-        LOG(INFO) << "Destructor called, shutting down threads";
-        shutdownThreads();
-    }
-
-    void init(fingerprint_device_t* device) {
+    void init(fingerprint_device_t* device) override {
         LOG(INFO) << "Initializing UDFPS handler";
-        
         mDevice = device;
-        
-        // Open device nodes
-        touch_fd_ = android::base::unique_fd(open(TOUCH_DEV_PATH, O_RDWR));
+
+        touch_fd_.reset(open(TOUCH_DEV_PATH, O_RDWR | O_CLOEXEC));
         if (touch_fd_.get() < 0) {
-            LOG(ERROR) << "Failed to open touch device: " << strerror(errno);
+            LOG(ERROR) << "Failed to open " << TOUCH_DEV_PATH << ": " << strerror(errno);
         }
-
-        disp_fd_ = android::base::unique_fd(open(DISP_FEATURE_PATH, O_RDWR));
+        disp_fd_.reset(open(DISP_FEATURE_PATH, O_RDWR | O_CLOEXEC));
         if (disp_fd_.get() < 0) {
-            LOG(ERROR) << "Failed to open display device: " << strerror(errno);
+            LOG(ERROR) << "Failed to open " << DISP_FEATURE_PATH << ": " << strerror(errno);
+        }
+        stop_fd_.reset(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
+        kick_fd_.reset(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK));
+
+        std::string fpVendor = android::base::GetProperty("persist.vendor.sys.fp.vendor", "none");
+        isFpcFod = (fpVendor == "fpc_fod");
+        LOG(INFO) << "Fingerprint vendor: " << fpVendor;
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            updateFodScanLocked();
         }
 
-        // Determine fingerprint vendor
-        std::string fpVendor = android::base::GetProperty("persist.vendor.sys.fp.vendor", "none");
-        LOG(INFO) << "Fingerprint vendor: " << fpVendor;
-        isFpcFod = (fpVendor == "fpc_fod");
-
-        // Start monitoring threads
-        fodThread_ = std::thread([this]() { fodPressMonitorThread(); });
+        rawThread_ = std::thread([this]() { fodPressMonitorThread(); });
         dispThread_ = std::thread([this]() { displayEventMonitorThread(); });
-
-        // FIX: trước đây thread này chỉ chạy khi isFpcFod == true, nghĩa là
-        // với các vendor khac (vd goodix), Touch_Fod_Enable không bao giờ
-        // được bật khi tắt màn hình -> vùng cảm biến FOD trên touch IC
-        // không được giữ ở chế độ quét -> chạm vào lúc màn hình tắt hoàn
-        // toàn im lặng (không rung, không sáng). Chạy thread này cho mọi
-        // vendor, chỉ còn phụ thuộc toggle persist.vendor.sys.fp.screen_off.
-        screenThread_ = std::thread([this]() { screenStateMonitorThread(); });
-
         LOG(INFO) << "UDFPS handler initialized";
     }
 
-    void onFingerDown(uint32_t /*x*/, uint32_t /*y*/, float /*minor*/, float /*major*/) {
+    void onFingerDown(uint32_t /*x*/, uint32_t /*y*/, float /*minor*/, float /*major*/) override {
         LOG(INFO) << __func__;
-        
-        mFbDownTimeMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-
-        /*
-         * On fpc_fod devices, enable FOD status when finger down is detected
-         * since the waiting message is not reliably sent.
-         */
-        if (isFpcFod) {
-            setFodStatus(FOD_STATUS_ON);
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            mDeferredUp = false;
+            // fpc_fod does not reliably send the "waiting for finger" message.
+            if (isFpcFod) setFodStatus(FOD_STATUS_ON);
+            beginFingerDownLocked(Source::FRAMEWORK);
         }
-
-        setFingerDown(true);
+        syncHalFingerState();
+        kickRawThread();
     }
 
-    void onFingerUp() {
+    void onFingerUp() override {
         LOG(INFO) << __func__;
-        
-        uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-        uint64_t elapsed = now - mFbDownTimeMs.load();
-
-        if (elapsed < 250) {
-            // FIX: don't blindly discard this UP just because it came in
-            // fast - verify against the raw sensor node first. Blindly
-            // trusting elapsed time here is what let the HBM circle get
-            // stuck lit (e.g. after a quick failed attempt): a real UP
-            // was thrown away and setFingerDown(false) never ran.
-            int rawFd = open(FOD_PRESS_STATUS_PATH, O_RDONLY);
-            bool stillPressed = false;
-            if (rawFd >= 0) {
-                stillPressed = readBool(rawFd);
-                close(rawFd);
-            }
-
-            if (stillPressed) {
-                LOG(INFO) << "UDFPS: Ignoring false framework UP (" << elapsed
-                           << "ms), finger still detected on sensor";
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (!mFingerDown) return;
+            int64_t elapsed = nowMs() - mDownMs;
+            if (mSource == Source::FRAMEWORK && elapsed < kFrameworkUpBounceMs &&
+                mRawPressed.load()) {
+                LOG(INFO) << "Framework up after " << elapsed
+                          << " ms while the sensor still sees the finger; deferring";
+                mDeferredUp = true;
                 return;
             }
-
-            LOG(INFO) << "UDFPS: framework UP after " << elapsed
-                       << "ms, but sensor confirms finger is up - honoring it";
+            mDeferredUp = false;
+            endFingerDownLocked();
         }
-
-        setFingerDown(false);
+        syncHalFingerState();
     }
 
-    void onAcquired(int32_t result, int32_t vendorCode) {
+    void onAcquired(int32_t result, int32_t vendorCode) override {
         LOG(INFO) << __func__ << " result: " << result << " vendorCode: " << vendorCode;
-        
+
         if (static_cast<AcquiredInfo>(result) == AcquiredInfo::GOOD) {
-            // Disable HBM on successful acquisition
-            {
-                std::lock_guard<std::mutex> lock(disp_mutex_);
-                if (disp_fd_.get() >= 0) {
-                    disp_local_hbm_req req;
-                    req.base.flag = 0;
-                    req.base.disp_id = MI_DISP_PRIMARY;
-                    req.local_hbm_value = LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP;
-                    ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &req);
-                }
-            }
-            
-            if (!enrolling.load()) {
-                setFodStatus(FOD_STATUS_OFF);
-            }
+            // Capture done: drop the local HBM right away.
+            setLocalHbm(false);
         }
 
         /*
@@ -217,477 +208,456 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
          * 22: finger down (fpc_fod)
          * 23: finger up
          */
-        if (!isFpcFod && vendorCode == 21) {
-            setFodStatus(FOD_STATUS_ON);
-        } else if (isFpcFod && vendorCode == 22) {
+        if ((!isFpcFod && vendorCode == 21) || (isFpcFod && vendorCode == 22)) {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            mAuthWaiting = true;
             setFodStatus(FOD_STATUS_ON);
         }
     }
 
-    void onError(int32_t error, int32_t vendorCode) {
-        LOG(INFO) << __func__ << " error: " << error << " vendorCode: " << vendorCode;
-
-        // FIX: onError() (e.g. ERROR_LOCKOUT after "too many attempts",
-        // ERROR_CANCELED, ERROR_TIMEOUT) ends the auth session on its own -
-        // the framework does not necessarily call onFingerUp() or cancel()
-        // afterwards, since as far as it's concerned the operation already
-        // finished (with an error). This handler had no onError() override
-        // at all, so it fell through to the base class' no-op default and
-        // nothing ever told the touch controller / Local HBM to turn back
-        // off. That's exactly the "stuck lit" white circle seen after a
-        // lockout: it stayed on through the whole PIN entry screen because
-        // no code path ever ran setFingerDown(false) for this case.
-        if (!enrolling.load()) {
-            setFodStatus(FOD_STATUS_OFF);
+    void onAuthenticationSucceeded() override {
+        LOG(INFO) << __func__;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            mAuthWaiting = false;
+            mDeferredUp = false;
+            endFingerDownLocked();
+            updateFodScanLocked();
         }
-        setFingerDown(false);
+        syncHalFingerState();
     }
 
-    void cancel() {
+    void onAuthenticationFailed() override {
+        // The session goes on; the finger-up path or the watchdog clears the state.
         LOG(INFO) << __func__;
-        enrolling.store(false);
-        setFodStatus(FOD_STATUS_OFF);
-        // FIX: cancel() solo apagaba la deteccion cruda del driver de touch,
-        // pero dejaba el Local HBM (brillo blanco) encendido si la sesion se
-        // cancelaba antes de un onFingerUp() real (p.ej. al forzar PIN tras
-        // demasiados intentos fallidos). Sin esto el circulo blanco se queda
-        // pegado en pantalla hasta que algo mas lo resetee.
-        setFingerDown(false);
     }
 
-    void preEnroll() {
+    void cancel() override {
         LOG(INFO) << __func__;
-        enrolling.store(true);
-    }
-
-    void enroll() {
-        LOG(INFO) << __func__;
-        enrolling.store(true);
-    }
-
-    void postEnroll() {
-        LOG(INFO) << __func__;
-        enrolling.store(false);
-        setFodStatus(FOD_STATUS_OFF);
-        // FIX: mismo problema que en cancel(), asegurar que el HBM quede apagado.
-        setFingerDown(false);
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            mAuthWaiting = false;
+            mDeferredUp = false;
+            endFingerDownLocked();
+            // Re-arms the FOD scan when the screen is off, so screen-off unlock
+            // keeps working after a cancelled session.
+            updateFodScanLocked();
+        }
+        syncHalFingerState();
     }
 
   private:
-    fingerprint_device_t* mDevice;
+    enum class Source { NONE, FRAMEWORK, RAW };
+
+    fingerprint_device_t* mDevice = nullptr;
+    bool isFpcFod = false;
+
     android::base::unique_fd touch_fd_;
     android::base::unique_fd disp_fd_;
-    std::atomic<bool> enrolling{false};
+    android::base::unique_fd stop_fd_;  // readable once shutting down
+    android::base::unique_fd kick_fd_;  // wakes the raw thread to re-plan its timers
+
     std::atomic<bool> isRunning{true};
-    bool isFpcFod;
-    
-    std::atomic<uint64_t> mFbDownTimeMs{0};
-    // FIX: independent timestamp for the raw hardware sensor thread.
-    // mFbDownTimeMs used to be shared between the real framework
-    // onFingerDown()/onFingerUp() path and fodPressMonitorThread().
-    // The raw thread stamped mFbDownTimeMs on every physical press
-    // pulse, even ones it went on to ignore (e.g. a stray touch on the
-    // "0" PIN key, which sits right over the sensor, with the screen
-    // already on). That reset the clock onFingerUp() uses to detect
-    // bounce, so a real finger-up right after such a stray touch was
-    // misread as "bounce" and setFingerDown(false) was skipped -
-    // leaving the HBM circle stuck on screen. Keeping the raw thread's
-    // own timing fully separate stops it from corrupting the
-    // framework-side debounce.
-    std::atomic<uint64_t> mRawDownTimeMs{0};
+    std::atomic<int> mPowerState{-1};  // MI_DISP_POWER_*, -1 until the first event
 
-    // WATCHDOG: lưới an toàn cuối cùng. Không thể đảm bảo framework/driver
-    // luôn gọi lại onFingerUp()/onError()/cancel() khi kết thúc phiên xác
-    // thực (vd: lockout sau 5 lần sai không phát sinh callback nào xuống
-    // handler này - xem log). Nếu trạng thái "pressed" bị treo quá lâu,
-    // chủ động ép tắt HBM/FOD để đèn vân tay không sáng vĩnh viễn.
-    std::atomic<bool> mFingerIsDown{false};
-    std::atomic<uint64_t> mLastDownTimeMs{0};
-    static constexpr uint64_t WATCHDOG_TIMEOUT_MS = 3000;
-    // FIX: một phiên xác thực vân tay hợp lệ, bình thường mất khoảng
-    // 900ms-1.3s (theo log thực tế). Nếu hỏi raw node ngay từ đầu, node
-    // này đã có thể tự về "released" giữa chừng (nó là tín hiệu dạng xung,
-    // không phải mức giữ) dù ngón tay vẫn còn trên cảm biến -> watchdog
-    // hiểu nhầm là đã nhấc tay, ép tắt đèn CẮT NGANG một lần xác thực
-    // đang chạy bình thường lúc màn hình bật. Chỉ bắt đầu tin/đọc raw node
-    // sau khoảng ân hạn này, đủ dài hơn hẳn thời gian xác thực bình thường.
-    static constexpr uint64_t WATCHDOG_GRACE_PERIOD_MS = 1500;
+    // Guarded by state_mutex_.
+    std::mutex state_mutex_;
+    bool mFingerDown = false;
+    Source mSource = Source::NONE;
+    int64_t mDownMs = 0;
+    bool mDeferredUp = false;
+    bool mAuthWaiting = false;
 
-    // Mutexes for thread safety
+    // Debounced raw sensor state, owned by the raw thread.
+    std::atomic<bool> mRawPressed{false};
+    std::atomic<int64_t> mRawReleasedMs{0};
+
+    // Finger state as last sent to the HAL; guarded by hal_mutex_.
+    std::mutex hal_mutex_;
+    bool mHalFingerDown = false;
+    std::atomic<bool> mFingerDownWanted{false};
+
     std::mutex touch_mutex_;
     std::mutex disp_mutex_;
-    std::mutex device_mutex_;
 
-    // Thread objects
-    std::thread fodThread_;
+    std::thread rawThread_;
     std::thread dispThread_;
-    std::thread screenThread_;
+    std::thread fallbackThread_;
 
-    int getBrightness() {
-        int fd = open(BRIGHTNESS_PATH, O_RDONLY);
-        if (fd < 0) return -1;
-        char buf[12];
-        ssize_t len = read(fd, buf, sizeof(buf) - 1);
-        close(fd);
-        if (len <= 0) return -1;
-        buf[len] = '\0';
-        return atoi(buf);
+    // ---- screen state ----------------------------------------------------
+
+    int screenState() {
+        int s = mPowerState.load();
+        if (s >= 0) return s;
+        int b = readBrightness();
+        if (b < 0) return MI_DISP_POWER_ON;  // unknown: behave as if on (safe)
+        return b > 0 ? MI_DISP_POWER_ON : MI_DISP_POWER_OFF;
     }
 
-    void screenStateMonitorThread() {
-        int lastState = -1;
-        while (isRunning.load()) {
-            int brightness = getBrightness();
-            if (brightness != -1) {
-                int currentState = (brightness == 0) ? 0 : 1;
-                
-                // Read Android screen-off toggle state
-                bool isScreenOffEnabled = android::base::GetBoolProperty("persist.vendor.sys.fp.screen_off", true);
-
-                if (currentState != lastState) {
-                    // FIX: bỏ điều kiện isFpcFod - áp dụng cho mọi vendor,
-                    // nếu không vùng FOD trên touch IC không được giữ quét
-                    // khi tắt màn hình (xem ghi chú ở init()).
-                    if (currentState == 0 && isScreenOffEnabled) {
-                        setFodStatus(FOD_STATUS_ON);
-                    } else if (currentState == 1) {
-                        if (!enrolling.load()) {
-                            setFodStatus(FOD_STATUS_OFF);
-                        }
-                    }
-                    lastState = currentState;
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        }
+    static bool screenOffUnlockEnabled() {
+        return android::base::GetBoolProperty(PROP_SCREEN_OFF, true);
     }
 
-    void shutdownThreads() {
-        isRunning.store(false);
-        // Join threads if they are running
-        if (fodThread_.joinable()) {
-            fodThread_.join();
+    void onScreenStateChanged(int state) {
+        LOG(INFO) << "Display power: " << powerName(state);
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        updateFodScanLocked();
+    }
+
+    // FOD scanning on the touch IC: on while an auth/enroll session waits for
+    // a finger or a finger is down, and while the screen is off/dozing if
+    // screen-off unlock is enabled.
+    void updateFodScanLocked() {
+        bool want;
+        if (mAuthWaiting || mFingerDown) {
+            want = true;
+        } else if (!isScreenOn(screenState())) {
+            want = screenOffUnlockEnabled();
+        } else {
+            want = false;
         }
-        if (dispThread_.joinable()) {
-            dispThread_.join();
+        setFodStatus(want ? FOD_STATUS_ON : FOD_STATUS_OFF);
+    }
+
+    // ---- finger state ----------------------------------------------------
+
+    void beginFingerDownLocked(Source source) {
+        if (mFingerDown) {
+            // e.g. raw press first, then the framework sees the same touch.
+            if (source == Source::FRAMEWORK) mSource = source;
+            return;
         }
-        if (screenThread_.joinable()) {
-            screenThread_.join();
+        mFingerDown = true;
+        mSource = source;
+        mDownMs = nowMs();
+        mFingerDownWanted.store(true);
+        setTouchFingerDown(true);
+        setLocalHbm(true);
+    }
+
+    bool endFingerDownLocked() {
+        if (!mFingerDown) return false;
+        mFingerDown = false;
+        mSource = Source::NONE;
+        mFingerDownWanted.store(false);
+        setTouchFingerDown(false);
+        setLocalHbm(false);
+        return true;
+    }
+
+    // The HAL may call back into this handler from inside extCmd(), so it is
+    // never called with state_mutex_ held. hal_mutex_ keeps the commands in
+    // order and drops ones that no longer match the current state.
+    void syncHalFingerState() {
+        std::lock_guard<std::mutex> lock(hal_mutex_);
+        bool want = mFingerDownWanted.load();
+        if (want == mHalFingerDown || mDevice == nullptr) return;
+        LOG(INFO) << "Finger " << (want ? "down" : "up") << " -> HAL";
+        mHalFingerDown = want;
+        mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS,
+                        want ? PARAM_FOD_PRESSED : PARAM_FOD_RELEASED);
+    }
+
+    // ---- raw sensor thread ----------------------------------------------
+
+    void kickRawThread() {
+        if (kick_fd_.get() >= 0) eventfd_write(kick_fd_.get(), 1);
+    }
+
+    // Called by the raw thread once a press is confirmed.
+    void onRawPressConfirmed() {
+        int state = screenState();
+        if (isScreenOn(state)) {
+            // Screen-on touches go through the UDFPS overlay (onFingerDown);
+            // raw presses here are stray touches (PIN keys, shade, ...).
+            return;
         }
+        if (!screenOffUnlockEnabled()) {
+            LOG(DEBUG) << "Raw press ignored: screen-off unlock disabled";
+            return;
+        }
+        if (!isDoze(state) && !android::base::GetBoolProperty(PROP_SCREEN_OFF_DIRECT, false)) {
+            // The panel is off and cannot light the sensor. The UDFPS doze
+            // sensor wakes the display; the next touch then authenticates.
+            LOG(INFO) << "Raw press with panel " << powerName(state)
+                      << ": leaving the wake-up to the UDFPS sensor";
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (mFingerDown) return;
+            mDeferredUp = false;
+            LOG(INFO) << "Raw press with panel " << powerName(state) << " -> finger down";
+            beginFingerDownLocked(Source::RAW);
+        }
+        syncHalFingerState();
+    }
+
+    void onRawReleased() {
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (!mFingerDown) return;
+            // Framework touches end with onFingerUp(), unless it was deferred.
+            if (mSource != Source::RAW && !mDeferredUp) return;
+            mDeferredUp = false;
+            endFingerDownLocked();
+        }
+        syncHalFingerState();
+    }
+
+    void runWatchdog(int64_t now) {
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (!mFingerDown) return;
+            bool rawUp = !mRawPressed.load();
+            int64_t releasedFor = rawUp ? now - std::max(mDownMs, mRawReleasedMs.load()) : 0;
+            int64_t limit = (mSource == Source::RAW) ? kStuckRawReleasedMs
+                                                     : kStuckFrameworkReleasedMs;
+            bool stuck = rawUp && releasedFor > limit;
+            bool tooLong = now - mDownMs > kMaxFingerDownMs;
+            if (!stuck && !tooLong) return;
+            LOG(WARNING) << "Watchdog: clearing finger-down state ("
+                         << (tooLong ? "held too long" : "sensor released") << ")";
+            mDeferredUp = false;
+            endFingerDownLocked();
+            updateFodScanLocked();
+        }
+        syncHalFingerState();
     }
 
     void fodPressMonitorThread() {
         LOG(INFO) << "FOD press monitor thread started";
-        
-        int fd = open(FOD_PRESS_STATUS_PATH, O_RDONLY);
-        if (fd < 0) {
-            LOG(ERROR) << "Failed to open " << FOD_PRESS_STATUS_PATH 
-                       << ", error: " << strerror(errno);
+        android::base::unique_fd fd(open(FOD_PRESS_STATUS_PATH, O_RDONLY | O_CLOEXEC));
+        if (fd.get() < 0) {
+            LOG(ERROR) << "Failed to open " << FOD_PRESS_STATUS_PATH << ": " << strerror(errno);
             return;
         }
+        readBool(fd.get());  // arm sysfs_notify
 
-        // Initial dummy read to clear state
-        readBool(fd);
-
-        struct pollfd fodPressStatusPoll = {
-            .fd = fd,
-            .events = POLLERR | POLLPRI,
-            .revents = 0,
-        };
+        int64_t firstPressMs = 0;
+        bool pressHandled = false;
+        int64_t releaseDeadline = 0;
 
         while (isRunning.load()) {
-            // Trả lại 1000ms: bản 200ms trước đó bị nghi là nguyên nhân
-            // khiến vân tay không hoạt động khi tắt màn hình (theo xác nhận
-            // của người dùng: "trước khi chỉnh 3000ms xuống 200ms" vẫn hoạt
-            // động bình thường). Watchdog "hỏi thẳng raw node" bên dưới vẫn
-            // giữ nguyên, chỉ chạy thưa hơn - vẫn tắt đèn nhanh hơn nhiều so
-            // với bản chỉ chờ 3000ms mù trước đây.
-            int rc = poll(&fodPressStatusPoll, 1, 1000);
+            int64_t now = nowMs();
+            int timeout = -1;
+            auto consider = [&](int64_t ms) {
+                ms = std::max<int64_t>(ms, 0);
+                if (timeout < 0 || ms < timeout) timeout = static_cast<int>(ms);
+            };
+            if (mRawPressed.load() && !pressHandled && releaseDeadline == 0) {
+                consider(firstPressMs + kPressConfirmMs - now);
+            }
+            if (releaseDeadline) consider(releaseDeadline - now);
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                if (mFingerDown) consider(kWatchdogPollMs);
+            }
 
+            struct pollfd fds[] = {
+                    {.fd = fd.get(), .events = POLLERR | POLLPRI, .revents = 0},
+                    {.fd = stop_fd_.get(), .events = POLLIN, .revents = 0},
+                    {.fd = kick_fd_.get(), .events = POLLIN, .revents = 0},
+            };
+            int rc = poll(fds, 3, timeout);
             if (rc < 0) {
                 if (errno == EINTR) continue;
                 LOG(ERROR) << "Poll failed: " << strerror(errno);
                 break;
             }
+            if (fds[1].revents) break;
+            if (fds[2].revents) {
+                eventfd_t v;
+                eventfd_read(kick_fd_.get(), &v);
+            }
+            if (fds[0].revents & (POLLHUP | POLLNVAL)) {
+                LOG(ERROR) << "Poll error on " << FOD_PRESS_STATUS_PATH;
+                break;
+            }
 
-            if (rc == 0) {
-                if (mFingerIsDown.load()) {
-                    uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch()).count();
-                    uint64_t elapsed = now - mLastDownTimeMs.load();
-
-                    // FIX: chỉ bắt đầu can thiệp sau khoảng ân hạn
-                    // (WATCHDOG_GRACE_PERIOD_MS), để không đụng vào một
-                    // phiên xác thực hợp lệ đang chạy bình thường (~1s).
-                    if (elapsed > WATCHDOG_GRACE_PERIOD_MS) {
-                        // Qua khỏi ân hạn thì mới tin raw node: nếu ngón tay
-                        // đã thực sự rời cảm biến mà state vẫn "pressed"
-                        // (framework không gửi onFingerUp/onError/cancel -
-                        // đúng tình huống khoá vân tay sau 5 lần sai), tắt
-                        // ngay lập tức, không chờ đủ WATCHDOG_TIMEOUT_MS.
-                        if (!readBool(fd)) {
-                            LOG(WARNING) << "UDFPS: Watchdog - raw sensor already "
-                                            "released while state stuck, forcing off";
-                            setFingerDown(false);
-                            if (!enrolling.load()) {
-                                setFodStatus(FOD_STATUS_OFF);
-                            }
-                        } else if (elapsed > WATCHDOG_TIMEOUT_MS) {
-                            // Cảm biến vẫn báo có ngón tay nhưng đã quá lâu -
-                            // lưới an toàn cuối cùng, phòng trường hợp không
-                            // tin được node raw (vd: driver kẹt giá trị cũ).
-                            LOG(WARNING) << "UDFPS: Watchdog - finger-down state stuck > "
-                                         << WATCHDOG_TIMEOUT_MS
-                                         << "ms despite raw still pressed, forcing off";
-                            setFingerDown(false);
-                            if (!enrolling.load()) {
-                                setFodStatus(FOD_STATUS_OFF);
-                            }
-                        }
+            now = nowMs();
+            if (fds[0].revents & (POLLERR | POLLPRI)) {
+                if (readBool(fd.get())) {
+                    releaseDeadline = 0;
+                    if (!mRawPressed.load()) {
+                        mRawPressed.store(true);
+                        firstPressMs = now;
+                        pressHandled = false;
                     }
-                }
-                continue;
-            }
-
-            // Check for expected events
-            if (!(fodPressStatusPoll.revents & (POLLERR | POLLPRI))) {
-                if (fodPressStatusPoll.revents & (POLLHUP | POLLNVAL)) {
-                    LOG(ERROR) << "Poll error event: " << fodPressStatusPoll.revents;
-                    break;
-                }
-                fodPressStatusPoll.revents = 0;
-                continue;
-            }
-
-            // Clear revents
-            fodPressStatusPoll.revents = 0;
-
-            bool pressed = readBool(fd);
-
-            // FILTRO DE FALSOS PRESS HARDWARE (roce/deslizar sobre el sensor)
-            if (pressed) {
-                bool stillPressed = true;
-                for (int sample = 0; sample < RAW_PRESS_CONFIRM_SAMPLES; sample++) {
-                    std::this_thread::sleep_for(
-                        std::chrono::milliseconds(RAW_PRESS_CONFIRM_INTERVAL_MS));
-                    if (!readBool(fd)) {
-                        stillPressed = false;
-                        break;
-                    }
-                }
-                if (!stillPressed) {
-                    LOG(DEBUG) << "UDFPS: Ignorando toque breve (el dedo ya no esta), "
-                                  "probablemente un roce sobre el sensor";
-                    continue;
-                }
-                pressed = true;
-            }
-
-            uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            
-            // FILTRO DE FALSOS UP HARDWARE
-            // FIX: use the raw-thread-only timestamp here, not the one
-            // shared with onFingerDown()/onFingerUp(), so a raw pulse
-            // (forwarded or not) can never reset the framework's own
-            // bounce timer.
-            if (pressed) {
-                mRawDownTimeMs.store(now);
-            } else {
-                uint64_t elapsed = now - mRawDownTimeMs.load();
-                if (elapsed < 250) {
-                    LOG(INFO) << "UDFPS: Hardware UP too fast (" << elapsed << "ms). Esperando 100ms...";
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    if (readBool(fd)) {
-                        LOG(INFO) << "UDFPS: Finger still present, ignoring false physical UP event.";
-                        continue; 
-                    }
+                } else if (mRawPressed.load() && releaseDeadline == 0) {
+                    releaseDeadline = now + kReleaseHoldMs;
                 }
             }
 
-            // SECURITY: Only send touch event if Screen-Off is enabled or screen is on
-            bool isScreenOffEnabled = android::base::GetBoolProperty("persist.vendor.sys.fp.screen_off", true);
-            bool screenOff = (getBrightness() == 0);
-            if (!isScreenOffEnabled && screenOff) {
-                LOG(INFO) << "UDFPS: Touch ignored, Screen-Off feature disabled.";
-                continue;
+            // Press confirmation: the node must still read high after the
+            // confirm delay (a brush over the sensor does not). If it reads
+            // low, start the release timer instead of re-checking in a loop.
+            if (mRawPressed.load() && !pressHandled && releaseDeadline == 0 &&
+                now - firstPressMs >= kPressConfirmMs) {
+                if (readBool(fd.get())) {
+                    pressHandled = true;
+                    onRawPressConfirmed();
+                } else {
+                    releaseDeadline = now + kReleaseHoldMs;
+                }
             }
 
-            /*
-             * ANTI-FALSO POSITIVO: este hilo solo existe para permitir que el
-             * sensor despierte el dispositivo con la pantalla APAGADA (el nodo
-             * crudo fod_press_status se dispara por hardware con cualquier
-             * toque en esa zona fisica, sin importar que hay en pantalla).
-             *
-             * El desbloqueo con la pantalla ENCENDIDA ya funciona de forma
-             * fiable via onFingerDown()/onFingerUp(), que el framework solo
-             * invoca cuando el toque cae realmente sobre el icono/overlay de
-             * UDFPS. Reenviar aqui tambien los "pressed" con pantalla
-             * encendida es lo que causaba que se iluminara el HBM al pulsar
-             * el "0" del PIN, al bajar el centro de control o al colgar una
-             * llamada: esos toques caen sobre la misma zona fisica del
-             * sensor por pura coincidencia de layout, no porque el usuario
-             * quisiera usar la huella.
-             *
-             * Los "released" siempre se reenvian para no dejar el HBM/estado
-             * de dedo-abajo colgado si la pantalla cambia de estado a mitad
-             * de un gesto.
-             */
-            if (pressed && !screenOff) {
-                LOG(DEBUG) << "UDFPS: Toque crudo ignorado con pantalla encendida "
-                              "(no es un toque real sobre el icono de huella)";
-                continue;
+            // Release confirmation.
+            if (releaseDeadline && now >= releaseDeadline) {
+                releaseDeadline = 0;
+                if (!readBool(fd.get())) {
+                    mRawPressed.store(false);
+                    mRawReleasedMs.store(now);
+                    onRawReleased();
+                }
             }
 
-            LOG(DEBUG) << "fod_press_status changed: " << (pressed ? "pressed" : "released");
-            setFingerDown(pressed);
+            runWatchdog(now);
         }
-
-        close(fd);
         LOG(INFO) << "FOD press monitor thread stopped";
+    }
+
+    // ---- display events --------------------------------------------------
+
+    bool registerDispEvent(int fd, int type) {
+        disp_event_req req;
+        req.base.flag = 0;
+        req.base.disp_id = MI_DISP_PRIMARY;
+        req.type = type;
+        if (ioctl(fd, MI_DISP_IOCTL_REGISTER_EVENT, &req) < 0) {
+            LOG(ERROR) << "Failed to register display event " << type << ": " << strerror(errno);
+            return false;
+        }
+        return true;
     }
 
     void displayEventMonitorThread() {
         LOG(INFO) << "Display event monitor thread started";
-        
-        int fd = open(DISP_FEATURE_PATH, O_RDWR);
-        if (fd < 0) {
-            LOG(ERROR) << "Failed to open " << DISP_FEATURE_PATH 
-                       << ", error: " << strerror(errno);
+        android::base::unique_fd fd(open(DISP_FEATURE_PATH, O_RDWR | O_CLOEXEC));
+        if (fd.get() < 0) {
+            LOG(ERROR) << "Failed to open " << DISP_FEATURE_PATH << ": " << strerror(errno);
+            startFallbackScreenPoll();
             return;
         }
-
-        // Register for FOD events
-        disp_event_req req;
-        req.base.flag = 0;
-        req.base.disp_id = MI_DISP_PRIMARY;
-        req.type = MI_DISP_EVENT_FOD;
-        if (ioctl(fd, MI_DISP_IOCTL_REGISTER_EVENT, &req) < 0) {
-            LOG(ERROR) << "Failed to register for display events: " << strerror(errno);
-            close(fd);
+        if (!registerDispEvent(fd.get(), MI_DISP_EVENT_FOD)) {
+            startFallbackScreenPoll();
             return;
         }
+        if (!registerDispEvent(fd.get(), MI_DISP_EVENT_POWER)) {
+            startFallbackScreenPoll();
+        }
 
-        struct pollfd dispEventPoll = {
-            .fd = fd,
-            .events = POLLIN,
-            .revents = 0,
-        };
-
+        char buf[1024];
         while (isRunning.load()) {
-            int rc = poll(&dispEventPoll, 1, 1000);  // 1 second timeout
-            
+            struct pollfd fds[] = {
+                    {.fd = fd.get(), .events = POLLIN, .revents = 0},
+                    {.fd = stop_fd_.get(), .events = POLLIN, .revents = 0},
+            };
+            int rc = poll(fds, 2, -1);
             if (rc < 0) {
                 if (errno == EINTR) continue;
                 LOG(ERROR) << "Display poll failed: " << strerror(errno);
                 break;
             }
-
-            if (rc == 0) continue;
-
-            // Check for expected events
-            if (!(dispEventPoll.revents & POLLIN)) {
-                if (dispEventPoll.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                    LOG(ERROR) << "Display poll error: " << dispEventPoll.revents;
+            if (fds[1].revents) break;
+            if (!(fds[0].revents & POLLIN)) {
+                if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    LOG(ERROR) << "Display poll error: " << fds[0].revents;
                     break;
                 }
-                dispEventPoll.revents = 0;
                 continue;
             }
 
-            // Clear revents
-            dispEventPoll.revents = 0;
-
-            struct disp_event_resp* response = parseDispEvent(fd);
-            if (response == nullptr) {
+            ssize_t size = read(fd.get(), buf, sizeof(buf));
+            if (size < static_cast<ssize_t>(sizeof(struct disp_event) + 1)) {
+                LOG(ERROR) << "Invalid display event size " << size;
                 continue;
             }
-
-            if (response->base.type != MI_DISP_EVENT_FOD) {
-                LOG(WARNING) << "Unexpected display event: " << response->base.type;
-                continue;
-            }
-
+            auto* response = reinterpret_cast<struct disp_event_resp*>(buf);
             int value = response->data[0];
-            LOG(DEBUG) << "Display event data: 0x" << std::hex << value;
 
-            bool localHbmUiReady = value & LOCAL_HBM_UI_READY;
-            
-            std::lock_guard<std::mutex> deviceLock(device_mutex_);
-            if (mDevice != nullptr) {
-                mDevice->extCmd(mDevice, COMMAND_NIT,
-                              localHbmUiReady ? PARAM_NIT_FOD : PARAM_NIT_NONE);
+            switch (response->base.type) {
+                case MI_DISP_EVENT_FOD: {
+                    bool localHbmUiReady = value & LOCAL_HBM_UI_READY;
+                    LOG(DEBUG) << "FOD display event 0x" << std::hex << value;
+                    std::lock_guard<std::mutex> lock(hal_mutex_);
+                    if (mDevice != nullptr) {
+                        mDevice->extCmd(mDevice, COMMAND_NIT,
+                                        localHbmUiReady ? PARAM_NIT_FOD : PARAM_NIT_NONE);
+                    }
+                    break;
+                }
+                case MI_DISP_EVENT_POWER:
+                    if (value != mPowerState.exchange(value)) onScreenStateChanged(value);
+                    break;
+                default:
+                    LOG(DEBUG) << "Unhandled display event " << response->base.type;
+                    break;
             }
         }
-
-        close(fd);
         LOG(INFO) << "Display event monitor thread stopped";
     }
 
+    // Used only if the display driver does not deliver power events.
+    void startFallbackScreenPoll() {
+        if (fallbackThread_.joinable()) return;
+        LOG(WARNING) << "No display power events; polling brightness every "
+                     << kFallbackScreenPollMs << " ms";
+        fallbackThread_ = std::thread([this]() {
+            bool lastOn = isScreenOn(screenState());
+            while (isRunning.load()) {
+                struct pollfd pfd = {.fd = stop_fd_.get(), .events = POLLIN, .revents = 0};
+                if (poll(&pfd, 1, kFallbackScreenPollMs) != 0) break;
+                bool on = isScreenOn(screenState());
+                if (on != lastOn) {
+                    lastOn = on;
+                    onScreenStateChanged(on ? MI_DISP_POWER_ON : MI_DISP_POWER_OFF);
+                }
+            }
+        });
+    }
+
+    // ---- low-level controls ---------------------------------------------
+
     void setFodStatus(int value) {
         std::lock_guard<std::mutex> lock(touch_mutex_);
-        
-        if (touch_fd_.get() < 0) {
-            LOG(ERROR) << "Touch device not opened";
-            return;
-        }
-
+        if (touch_fd_.get() < 0) return;
         int buf[MAX_BUF_SIZE] = {MI_DISP_PRIMARY, Touch_Fod_Enable, value};
         if (ioctl(touch_fd_.get(), TOUCH_IOC_SET_CUR_VALUE, &buf) < 0) {
             LOG(ERROR) << "Failed to set FOD status: " << strerror(errno);
         } else {
-            LOG(DEBUG) << "Set FOD status to " << value;
+            LOG(DEBUG) << "FOD scan " << (value ? "on" : "off");
         }
     }
 
-    void setFingerDown(bool pressed) {
-        // DEBUG: single choke point for every HBM/finger-down change, so
-        // logcat can show exactly when and how many times this gets called
-        // with which value, no matter which callback triggered it.
-        LOG(INFO) << "UDFPS setFingerDown(" << (pressed ? "true" : "false") << ") called";
-
-        // WATCHDOG: ghi nhận trạng thái/mốc thời gian để vòng poll bên dưới
-        // có thể phát hiện nếu "pressed" bị treo quá lâu mà không ai tắt.
-        mFingerIsDown.store(pressed);
-        if (pressed) {
-            mLastDownTimeMs.store(std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count());
+    void setTouchFingerDown(bool pressed) {
+        std::lock_guard<std::mutex> lock(touch_mutex_);
+        if (touch_fd_.get() < 0) return;
+        int buf[MAX_BUF_SIZE] = {MI_DISP_PRIMARY, THP_FOD_DOWNUP_CTL, pressed ? 1 : 0};
+        if (ioctl(touch_fd_.get(), TOUCH_IOC_SET_CUR_VALUE, &buf) < 0) {
+            LOG(ERROR) << "Failed to set finger down: " << strerror(errno);
         }
+    }
 
-        // Update touch controller
-        {
-            std::lock_guard<std::mutex> lock(touch_mutex_);
-            if (touch_fd_.get() >= 0) {
-                int buf[MAX_BUF_SIZE] = {MI_DISP_PRIMARY, THP_FOD_DOWNUP_CTL, pressed ? 1 : 0};
-                if (ioctl(touch_fd_.get(), TOUCH_IOC_SET_CUR_VALUE, &buf) < 0) {
-                    LOG(ERROR) << "Failed to set finger down: " << strerror(errno);
-                }
-            }
+    void setLocalHbm(bool on) {
+        std::lock_guard<std::mutex> lock(disp_mutex_);
+        if (disp_fd_.get() < 0) return;
+        disp_local_hbm_req req;
+        req.base.flag = 0;
+        req.base.disp_id = MI_DISP_PRIMARY;
+        req.local_hbm_value =
+                on ? LHBM_TARGET_BRIGHTNESS_WHITE_1000NIT : LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP;
+        if (ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &req) < 0) {
+            LOG(ERROR) << "Failed to set local HBM: " << strerror(errno);
         }
+    }
 
-        // Update display HBM
-        {
-            std::lock_guard<std::mutex> lock(disp_mutex_);
-            if (disp_fd_.get() >= 0) {
-                disp_local_hbm_req req;
-                req.base.flag = 0;
-                req.base.disp_id = MI_DISP_PRIMARY;
-                req.local_hbm_value = pressed ? LHBM_TARGET_BRIGHTNESS_WHITE_1000NIT
-                                              : LHBM_TARGET_BRIGHTNESS_OFF_FINGER_UP;
-                if (ioctl(disp_fd_.get(), MI_DISP_IOCTL_SET_LOCAL_HBM, &req) < 0) {
-                    LOG(ERROR) << "Failed to set HBM: " << strerror(errno);
-                }
-            }
-        }
-
-        // Notify fingerprint device
-        {
-            std::lock_guard<std::mutex> lock(device_mutex_);
-            if (mDevice != nullptr) {
-                mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS,
-                              pressed ? PARAM_FOD_PRESSED : PARAM_FOD_RELEASED);
-            }
-        }
+    void shutdownThreads() {
+        isRunning.store(false);
+        if (stop_fd_.get() >= 0) eventfd_write(stop_fd_.get(), 1);
+        if (rawThread_.joinable()) rawThread_.join();
+        if (dispThread_.joinable()) dispThread_.join();
+        if (fallbackThread_.joinable()) fallbackThread_.join();
     }
 };
 
@@ -700,6 +670,6 @@ static void destroy(UdfpsHandler* handler) {
 }
 
 extern "C" UdfpsHandlerFactory UDFPS_HANDLER_FACTORY = {
-    .create = create,
-    .destroy = destroy,
+        .create = create,
+        .destroy = destroy,
 };
