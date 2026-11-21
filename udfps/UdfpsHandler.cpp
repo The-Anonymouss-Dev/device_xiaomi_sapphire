@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -59,6 +60,10 @@
 // Off by default: with the panel off the sensor area cannot be lit, so these
 // attempts only end in "Up too fast". Kept as a switch for testing.
 #define PROP_SCREEN_OFF_DIRECT "persist.vendor.udfps.screen_off_direct"
+// One-touch screen-off unlock: when the display wakes up while the finger
+// that started on the sensor (panel off) is still there, start the capture
+// with that same touch. Off by default while it is being tested.
+#define PROP_WAKE_CONTINUE "persist.vendor.udfps.wake_continue"
 
 using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
@@ -79,6 +84,17 @@ constexpr int64_t kStuckFrameworkReleasedMs = 3000;
 constexpr int64_t kMaxFingerDownMs = 10000;
 constexpr int kWatchdogPollMs = 500;
 constexpr int64_t kLhbmRecheckMs = 150;
+// One-touch unlock: the press must have started at most this long before
+// the display woke up, and the capture starts this long after the wake so
+// the panel can take the local HBM request.
+constexpr int64_t kWakeContinueWindowMs = 2000;
+constexpr int64_t kWakeContinueDelayMs = 80;
+// Lockout guard: this many failed matches within the window pause
+// screen-off scanning for the lockout time (also stops repeated failed
+// attempts from a phone in a pocket).
+constexpr size_t kLockoutFailures = 5;
+constexpr int64_t kLockoutWindowMs = 60000;
+constexpr int64_t kLockoutMs = 30000;
 // Only used when the display driver does not deliver power events.
 constexpr int kFallbackScreenPollMs = 1000;
 
@@ -230,6 +246,8 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
         LOG(INFO) << __func__;
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
+            mFailTimes.clear();
+            mLockoutUntilMs.store(0);
             mAuthWaiting = false;
             mDeferredUp = false;
             endFingerDownLocked();
@@ -241,6 +259,21 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
     void onAuthenticationFailed() override {
         // The session goes on; the finger-up path or the watchdog clears the state.
         LOG(INFO) << __func__;
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        int64_t now = nowMs();
+        mFailTimes.push_back(now);
+        while (!mFailTimes.empty() && now - mFailTimes.front() > kLockoutWindowMs) {
+            mFailTimes.pop_front();
+        }
+        if (mFailTimes.size() >= kLockoutFailures) {
+            mFailTimes.clear();
+            mLockoutUntilMs.store(now + kLockoutMs);
+            LOG(INFO) << "Lockout guard: " << kLockoutFailures
+                      << " failed matches, screen-off scanning paused for " << kLockoutMs / 1000
+                      << " s";
+            updateFodScanLocked();
+            kickRawThread();
+        }
     }
 
     void cancel() override {
@@ -283,6 +316,15 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
     std::atomic<bool> mRawPressed{false};
     std::atomic<int64_t> mRawReleasedMs{0};
 
+    // One-touch unlock bookkeeping (raw thread writes, others read).
+    std::atomic<int64_t> mRawPressStartMs{0};
+    std::atomic<bool> mRawPendingWake{false};    // press seen with the panel off
+    std::atomic<int64_t> mWakeContinueAtMs{0};   // 0 = nothing scheduled
+
+    // Lockout guard. mFailTimes is guarded by state_mutex_.
+    std::deque<int64_t> mFailTimes;
+    std::atomic<int64_t> mLockoutUntilMs{0};
+
     // Finger state as last sent to the HAL; guarded by hal_mutex_.
     std::mutex hal_mutex_;
     bool mHalFingerDown = false;
@@ -311,20 +353,71 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
         return android::base::GetBoolProperty(PROP_SCREEN_OFF, true);
     }
 
+    bool lockedOut() const { return mLockoutUntilMs.load() > nowMs(); }
+
     void onScreenStateChanged(int state) {
         LOG(INFO) << "Display power: " << powerName(state);
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        updateFodScanLocked();
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            updateFodScanLocked();
+        }
+        // The display can light the sensor now; if the finger that woke it
+        // is still on the sensor, capture with that same touch.
+        if ((isScreenOn(state) || isDoze(state)) && mRawPendingWake.load() &&
+            android::base::GetBoolProperty(PROP_WAKE_CONTINUE, false)) {
+            mWakeContinueAtMs.store(nowMs() + kWakeContinueDelayMs);
+            kickRawThread();
+        }
     }
+
+    // Runs on the raw thread when the wake-continue timer fires.
+    void tryWakeContinue() {
+        int64_t now = nowMs();
+        int64_t pressedFor = now - mRawPressStartMs.load();
+        bool pending = mRawPendingWake.load();
+        bool ok = pending && mRawPressed.load() &&
+                  pressedFor <= kWakeContinueWindowMs + kWakeContinueDelayMs + 500 &&
+                  !lockedOut() && screenOffUnlockEnabled() && !isScreenOff(screenState());
+        if (!ok) {
+            if (pending) {
+                LOG(INFO) << "One-touch unlock skipped (finger gone, too late or locked out)";
+            }
+            mRawPendingWake.store(false);
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            updateFodScanLocked();
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            mRawPendingWake.store(false);
+            if (mFingerDown) return;
+            LOG(INFO) << "One-touch unlock: finger still on the sensor after wake-up ("
+                      << pressedFor << " ms) -> finger down";
+            mDeferredUp = false;
+            beginFingerDownLocked(Source::RAW);
+            updateFodScanLocked();
+        }
+        syncHalFingerState();
+    }
+
+    static bool isScreenOff(int state) { return !isScreenOn(state) && !isDoze(state); }
 
     // FOD scanning on the touch IC: on while an auth/enroll session waits for
     // a finger or a finger is down, and while the screen is off/dozing if
     // screen-off unlock is enabled.
     void updateFodScanLocked() {
         bool want;
-        if (mAuthWaiting || mFingerDown) {
+        bool screenOn = isScreenOn(screenState());
+        if (mFingerDown || (mRawPendingWake.load() && mRawPressed.load())) {
+            // Keep scanning while a finger is on the sensor, including the
+            // one that woke the display (one-touch unlock).
             want = true;
-        } else if (!isScreenOn(screenState())) {
+        } else if (!screenOn && lockedOut()) {
+            // Too many failed matches: stop scanning in the dark (pocket).
+            want = false;
+        } else if (mAuthWaiting) {
+            want = true;
+        } else if (!screenOn) {
             want = screenOffUnlockEnabled();
         } else {
             want = false;
@@ -395,7 +488,14 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
             LOG(DEBUG) << "Raw press ignored: screen-off unlock disabled";
             return;
         }
+        if (lockedOut()) {
+            LOG(INFO) << "Raw press ignored: lockout guard active";
+            return;
+        }
         if (!isDoze(state) && !android::base::GetBoolProperty(PROP_SCREEN_OFF_DIRECT, false)) {
+            // Remember it: if the display wakes while this finger stays on
+            // the sensor, the capture can start with this touch.
+            mRawPendingWake.store(true);
             // The panel is off and cannot light the sensor. The UDFPS doze
             // sensor wakes the display; the next touch then authenticates.
             LOG(INFO) << "Raw press with panel " << powerName(state)
@@ -469,6 +569,8 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
             }
             if (releaseDeadline) consider(releaseDeadline - now);
             if (int64_t r = mLhbmRecheckMs.load()) consider(r - now);
+            if (int64_t w = mWakeContinueAtMs.load()) consider(w - now);
+            if (int64_t l = mLockoutUntilMs.load()) consider(l - now);
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
                 if (mFingerDown) consider(kWatchdogPollMs);
@@ -501,6 +603,8 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
                     releaseDeadline = 0;
                     if (!mRawPressed.load()) {
                         mRawPressed.store(true);
+                        mRawPressStartMs.store(now);
+                        mRawPendingWake.store(false);
                         firstPressMs = now;
                         pressHandled = false;
                     }
@@ -527,9 +631,29 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
                 releaseDeadline = 0;
                 if (!readBool(fd.get())) {
                     mRawPressed.store(false);
+                    bool hadPendingWake = mRawPendingWake.exchange(false);
                     mRawReleasedMs.store(now);
                     onRawReleased();
+                    if (hadPendingWake) {
+                        // The scan was kept on for this finger; re-evaluate.
+                        std::lock_guard<std::mutex> lock(state_mutex_);
+                        updateFodScanLocked();
+                    }
                 }
+            }
+
+            // One-touch unlock after a wake-up (see onScreenStateChanged).
+            if (int64_t w = mWakeContinueAtMs.load(); w && now >= w) {
+                mWakeContinueAtMs.store(0);
+                tryWakeContinue();
+            }
+
+            // Lockout guard expired: allow screen-off scanning again.
+            if (int64_t l = mLockoutUntilMs.load(); l && now >= l) {
+                mLockoutUntilMs.store(0);
+                LOG(INFO) << "Lockout guard ended";
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                updateFodScanLocked();
             }
 
             // Repeated HBM-off (see endFingerDownLocked).
