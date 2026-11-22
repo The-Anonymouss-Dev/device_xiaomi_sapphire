@@ -221,16 +221,6 @@ on boot
     chown system system /sys/class/backlight/panel1-backlight/brightness
     chown system system /sys/class/backlight/panel1-backlight/max_brightness
 
-    # Allow access to sensors device attributes
-    chown system system /sys/class/sensors/MPU6050-accel/enable
-    chown system system /sys/class/sensors/MPU6050-accel/poll_delay
-    chown system system /sys/class/sensors/MPU6050-gyro/enable
-    chown system system /sys/class/sensors/MPU6050-gyro/poll_delay
-    chown system system /sys/class/sensors/apds9930-light/enable
-    chown system system /sys/class/sensors/apds9930-light/poll_delay
-    chown system system /sys/class/sensors/apds9930-proximity/enable
-    chown system system /sys/class/sensors/apds9930-proximity/poll_delay
-
     # Create directory used for display
     # for backward compatibility
     mkdir /persist/display 0770 system graphics
@@ -342,17 +332,6 @@ on post-fs-data
     chown root system /persist
     chmod 0771 /persist
     chown system system /persist/WCNSS_qcom_wlan_nv.bin
-    chmod 0664 /sys/devices/platform/msm_sdcc.1/polling
-    chmod 0664 /sys/devices/platform/msm_sdcc.2/polling
-    chmod 0664 /sys/devices/platform/msm_sdcc.3/polling
-    chmod 0664 /sys/devices/platform/msm_sdcc.4/polling
-
-    # Chown polling nodes as needed from UI running on system server
-    chown system system /sys/devices/platform/msm_sdcc.1/polling
-    chown system system /sys/devices/platform/msm_sdcc.2/polling
-    chown system system /sys/devices/platform/msm_sdcc.3/polling
-    chown system system /sys/devices/platform/msm_sdcc.4/polling
-
     #Create the symlink to qcn wpa_supplicant folder for ar6000 wpa_supplicant
     #symlink /data/misc/wifi/wpa_supplicant /data/system/wpa_supplicant
 
@@ -438,13 +417,6 @@ on post-fs-data
 
     #Create dir for TUI
     mkdir /data/vendor/tui 0700 system drmrpc
-
-service iop /system/vendor/bin/iop
-    class main
-    user root
-    group root
-    disabled
-    socket iop seqpacket 0666 root system
 
 service vendor.ssr_setup /system/vendor/bin/ssr_setup
     oneshot
@@ -591,18 +563,6 @@ service vendor.move_wifi_data /system/bin/move_wifi_data.sh
     disabled
     oneshot
 
-service wigignpt /vendor/bin/wigignpt
-    interface vendor.qti.hardware.wigig.netperftuner@1.0::INetPerfTuner default
-    class hal
-    socket wigig/wigignpt stream 660 system wifi
-    user system
-    group wifi
-    capabilities NET_ADMIN
-    disabled
-
-on property:persist.vendor.wigig.npt.enable=1
-    start wigignpt
-
 service dhcpcd_wlan0 /system/bin/dhcpcd -ABKLG
     class late_start
     disabled
@@ -711,26 +671,6 @@ service battery_monitor /system/bin/battery_monitor
     group system
     disabled
 
-service vendor.ril-daemon2 /vendor/bin/hw/rild -c 2
-    class main
-    user radio
-    disabled
-    group radio cache inet misc audio sdcard_r sdcard_rw diag oem_2901 log
-    capabilities BLOCK_SUSPEND NET_ADMIN NET_RAW
-
-service vendor.ril-daemon3 /vendor/bin/hw/rild -c 3
-    class main
-    user radio
-    disabled
-    group radio cache inet misc audio sdcard_r sdcard_rw diag oem_2901 log
-    capabilities BLOCK_SUSPEND NET_ADMIN NET_RAW
-
-service profiler_daemon /system/bin/profiler_daemon
-    class late_start
-    user root
-    group root
-    disabled
-
 service charger /system/bin/charger
     class charger
     user system
@@ -742,35 +682,6 @@ service vendor.ssr_diag /system/vendor/bin/ssr_diag
     class late_start
     user system
     group system
-    disabled
-
-service diag_mdlog_start /system/vendor/bin/diag_mdlog -n 40 -s 500
-    class late_start
-    user shell
-    group system oem_2901 sdcard_rw sdcard_r media_rw
-    disabled
-    oneshot
-
-service diag_mdlog_stop /system/vendor/bin/diag_mdlog -k
-    class late_start
-    user shell
-    group system oem_2901 sdcard_rw sdcard_r media_rw
-    disabled
-    oneshot
-
-service qlogd /system/xbin/qlogd
-    socket qlogd stream 0662 system system
-    class main
-    disabled
-on property:persist.sys.qlogd=1
-    start qlogd
-on property:persist.sys.qlogd=0
-    stop qlogd
-
-service vendor.msm_irqbalance /vendor/bin/msm_irqbalance -f /system/vendor/etc/msm_irqbalance.conf
-    class core
-    user root
-    group root
     disabled
 
 on charger

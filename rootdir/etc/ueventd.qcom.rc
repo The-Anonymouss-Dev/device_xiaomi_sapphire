@@ -428,17 +428,8 @@ subsystem mi_display
 /sys/kernel/qts/secondary/trusted_touch_*  0660   system     system
 
 # Add device block for FRP
-/dev/block/platform/soc/7824900.sdhci/by-name/config    0600   system     system
-/dev/block/platform/soc/7464900.sdhci/by-name/frp       0600   system     system
-/dev/block/platform/soc/624000.ufshc/by-name/frp        0600   system     system
-/dev/block/platform/soc/1da4000.ufshc/by-name/frp       0600   system     system
-/dev/block/platform/soc/c0c4000.sdhci/by-name/frp       0600   system     system
-/dev/block/platform/soc/1d84000.ufshc/by-name/frp       0600   system     system
-/dev/block/platform/soc/7c4000.sdhci/by-name/frp        0600   system     system
 /dev/block/platform/soc/4744000.sdhci/by-name/frp       0600   system     system
 /dev/block/platform/soc/4804000.ufshc/by-name/frp       0600   system     system
-/dev/block/platform/soc/7c4000.sdhci/by-name/rawdump    0660   root       system
-/dev/block/platform/soc/1d84000.ufshc/by-name/rawdump   0660   root       system
 /dev/block/platform/soc/4804000.ufshc/by-name/rawdump   0600   root       system
 
 # This is temporary while using SD card for initial bring-up

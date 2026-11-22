@@ -256,11 +256,6 @@ service vendor.per_proxy /vendor/bin/pm-proxy
     group system
     disabled
 
-service vendor.mdm_helper /vendor/bin/mdm_helper
-    class core
-    group system wakelock
-    disabled
-
 service vendor.hvdcp_opti /system/vendor/bin/hvdcp_opti
     class main
     user root
@@ -320,30 +315,6 @@ service panel_color /vendor/bin/panelcolor_bin
 on property:sys.boot_completed=1
     start panel_color
 # add end
-
-#add for wifi 9434 log
-service vendor.tcpdump /vendor/bin/vendor_tcpdump -i any -W 2 -C 2 -s 134 -w /data/vendor/wlan_logs/tcpdump.pcap
-    class main
-    user root
-    group root wifi inet sdcard_rw media_rw diag
-    disabled
-    oneshot
-
-service sniffer /vendor/bin/vendor_tcpdump -i wlan0 -w /data/vendor/wlan_logs/sniffer.pcap
-    class main
-    user root
-    group root
-    disabled
-    oneshot
-
-on property:persist.vendor.tcpdump.enable=true
-    start vendor.tcpdump
-
-on property:persist.vendor.tcpdump.enable=false
-    stop vendor.tcpdump
-
-on property:persist.sys.cota.carrier=OR
-   stop vendor.tcpdump
 
 #add for btmac property
 on property:persist.ro.ril.oem.btmac=*
