@@ -1274,8 +1274,6 @@ vendor/etc/vintf/manifest/vendor.qti.hardware.lights.service.xml
 # Listen
 vendor/etc/vintf/manifest/manifest_non_qmaa.xml
 vendor/etc/vintf/manifest/manifest_non_qmaa_extn.xml
-vendor/etc/microphone_characteristics.xml
-vendor/etc/usecaseKvManager.xml
 vendor/lib64/hw/sound_trigger.primary.bengal.so
 vendor/lib64/libcapiv2svacnnvendor.so
 vendor/lib64/libcapiv2svarnnvendor.so
@@ -1727,7 +1725,6 @@ vendor/etc/seccomp_policy/gnss@2.0-edgnss-daemon.policy
 vendor/etc/seccomp_policy/gnss@2.0-qsap-location.policy
 vendor/etc/seccomp_policy/gnss@2.0-xtra-daemon.policy
 vendor/etc/seccomp_policy/gnss@2.0-xtwifi-client.policy
-vendor/etc/seccomp_policy/imsrtp.policy
 vendor/etc/seccomp_policy/qcrilnr@2.0.policy
 vendor/etc/seccomp_policy/qms.policy
 vendor/etc/seccomp_policy/qspm.policy

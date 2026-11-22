@@ -45,10 +45,6 @@ on boot
     chmod 0664 /sys/class/touch/touch_dev/fod_press_status
     chown system graphics /sys/class/touch/touch_dev/fod_press_status
     
-    # Wakeup source
-    chown system system /sys/devices/platform/soc/soc:fingerprint_xiaomi/wakeup/wakeup7/active
-    chmod 0660 /sys/devices/platform/soc/soc:fingerprint_xiaomi/wakeup/wakeup7/active
-    
     # Touch test
     chmod 0664 /sys/class/touch/touch_dev/touch_dfs_test
     chown system system /sys/class/touch/touch_dev/touch_dfs_test
