@@ -6,6 +6,14 @@
 -->
 <resources>
 
+    <!-- Pocket protection for wake gestures (double tap): the proximity
+         sensor is read only for a moment when such a gesture tries to wake
+         the screen. Nothing runs while the screen is off. The ADSP sensor
+         can be slow to answer, so allow 400 ms. -->
+    <bool name="config_proximityCheckOnWake">true</bool>
+    <integer name="config_proximityCheckTimeout">400</integer>
+    <bool name="config_proximityCheckOnWakeEnabledByDefault">true</bool>
+
     <!-- Hardware keys present on the device, stored as a bit field.
          This integer should equal the sum of the corresponding value for each
          of the following keys present:
