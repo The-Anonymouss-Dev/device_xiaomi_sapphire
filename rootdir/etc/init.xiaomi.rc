@@ -69,6 +69,12 @@ service stflashtool /vendor/bin/STFlashTool
     oneshot
     disabled
 
+service vendor.pd_kick /vendor/bin/init.sapphire.pd_kick.sh
+    class late_start
+    user root
+    group root
+    disabled
+
 service vendor.goodix-events /vendor/bin/init.goodix.events.sh
     class late_start
     user root
@@ -78,6 +84,7 @@ service vendor.goodix-events /vendor/bin/init.goodix.events.sh
 
 on property:sys.boot_completed=1
     start vendor.goodix-events
+    start vendor.pd_kick
 
 on property:ro.boot.hwname=*
     setprop ro.boot.product.hardware.sku ${ro.boot.hwname}

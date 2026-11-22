@@ -1,0 +1,25 @@
+type vendor_pd_kick, domain;
+type vendor_pd_kick_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(vendor_pd_kick)
+
+# The script and the toybox applets it runs (cat, sleep)
+allow vendor_pd_kick vendor_shell_exec:file rx_file_perms;
+allow vendor_pd_kick vendor_toolbox_exec:file rx_file_perms;
+
+# usb/online, qcom-battery/typec_mode and the qpnp-smb5 iio channels
+r_dir_file(vendor_pd_kick, {
+  sysfs
+  sysfs_batteryinfo
+  vendor_sysfs_battery_supply
+  vendor_sysfs_iio
+  vendor_sysfs_usb_supply
+})
+
+# Writing in_index_usb_typec_power_role_input
+allow vendor_pd_kick {
+  sysfs
+  vendor_sysfs_iio
+}:file w_file_perms;
+
+allow vendor_pd_kick kmsg_device:chr_file w_file_perms;
