@@ -85,3 +85,12 @@ on property:sys.boot_completed=1
 
 on property:ro.boot.hwname=*
     setprop ro.boot.product.hardware.sku ${ro.boot.hwname}
+
+# Mic noise suppression. The ROM ships 2-mic Fluence Endfire; to use another
+# variant: setprop persist.vendor.audio.mic_ns nn|stock, then reboot.
+# Persist props load before the audio HAL starts, so PAL reads the variant.
+on property:persist.vendor.audio.mic_ns=nn
+    mount none /vendor/etc/audio_mic/resourcemanager_bengal_idp_nn.xml /vendor/etc/resourcemanager_bengal_idp.xml bind
+
+on property:persist.vendor.audio.mic_ns=stock
+    mount none /vendor/etc/audio_mic/resourcemanager_bengal_idp_stock.xml /vendor/etc/resourcemanager_bengal_idp.xml bind

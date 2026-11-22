@@ -5,3 +5,5 @@ allow init vendor_sysfs_scsi_host:file { open write getattr };
 allow vold vendor_sysfs_scsi_host:file { open write getattr };
 allow vold vendor_sysfs_memory:file { open write getattr };
 allow init vendor_sysfs_memory:file { open write getattr };
+# Mic noise-suppression variant (init.xiaomi.rc)
+allow init vendor_configs_file:file mounton;

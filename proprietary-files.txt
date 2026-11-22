@@ -116,7 +116,6 @@ vendor/etc/mixer_paths_bengal_idp_india.xml
 vendor/etc/mixer_paths_bengal_qrd.xml
 vendor/etc/mixer_paths_scubaidp.xml
 vendor/etc/mixer_paths_scubaqrd.xml
-vendor/etc/resourcemanager_bengal_idp.xml
 vendor/etc/resourcemanager_bengal_idp_arrax.xml
 vendor/etc/resourcemanager_bengal_qrd.xml
 vendor/etc/resourcemanager_bengal_qrd_arrax.xml
