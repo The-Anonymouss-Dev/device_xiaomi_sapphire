@@ -1,0 +1,19 @@
+type hal_lineage_livedisplay_xiaomi, domain;
+hal_server_domain(hal_lineage_livedisplay_xiaomi, hal_lineage_livedisplay)
+
+type hal_lineage_livedisplay_xiaomi_exec, exec_type, vendor_file_type, file_type;
+init_daemon_domain(hal_lineage_livedisplay_xiaomi)
+
+binder_call(hal_lineage_livedisplay_xiaomi, servicemanager)
+
+# Sunlight mode: panel HBM through the Xiaomi display driver
+allow hal_lineage_livedisplay_xiaomi vendor_displayfeature_device:chr_file rw_file_perms;
+allow hal_lineage_livedisplay_xiaomi vendor_displayfeature_device:chr_file ioctl;
+
+# Heat guard: battery temperature (read only). The qpnp-smb5 battery node
+# has no label of its own on bengal, so it is plain sysfs.
+r_dir_file(hal_lineage_livedisplay_xiaomi, sysfs_batteryinfo)
+r_dir_file(hal_lineage_livedisplay_xiaomi, vendor_sysfs_battery_supply)
+allow hal_lineage_livedisplay_xiaomi sysfs:dir r_dir_perms;
+allow hal_lineage_livedisplay_xiaomi sysfs:file r_file_perms;
+allow hal_lineage_livedisplay_xiaomi sysfs:lnk_file read;

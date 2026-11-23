@@ -1,0 +1,24 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+cc_binary {
+    name: "vendor.lineage.livedisplay-service.xiaomi",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["vendor.lineage.livedisplay-service.xiaomi.rc"],
+    vintf_fragments: ["vendor.lineage.livedisplay-service.xiaomi.xml"],
+    srcs: [
+        "SunlightEnhancement.cpp",
+        "service.cpp",
+    ],
+    shared_libs: [
+        "libbase",
+        "libbinder_ndk",
+        "vendor.lineage.livedisplay-V1-ndk",
+    ],
+    header_libs: [
+        "generated_kernel_headers",
+    ],
+}

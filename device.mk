@@ -384,7 +384,8 @@ PRODUCT_COPY_FILES += \
 
 # LiveDisplay
 PRODUCT_PACKAGES += \
-    vendor.lineage.livedisplay-service.sdm
+    vendor.lineage.livedisplay-service.sdm \
+    vendor.lineage.livedisplay-service.xiaomi
 
 $(call soong_config_set_bool,livedisplay_sdm,enable_dm,false)
 

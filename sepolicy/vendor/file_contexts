@@ -62,3 +62,4 @@
 /(vendor|system/vendor)/bin/vendor\.adsp-wait\.sh  u:object_r:vendor_qti_init_shell_exec:s0
 /(vendor|system/vendor)/bin/init\.sapphire\.pd_kick\.sh  u:object_r:vendor_pd_kick_exec:s0
 /(vendor|system/vendor)/bin/touch_game_mode  u:object_r:vendor_touch_game_exec:s0
+/(vendor|system/vendor)/bin/hw/vendor\.lineage\.livedisplay-service\.xiaomi  u:object_r:hal_lineage_livedisplay_xiaomi_exec:s0
