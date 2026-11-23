@@ -30,3 +30,6 @@ RUNTIME_OVERRIDE_LOG_LEVEL          u:object_r:exported_system_prop:s0
 # Bluetooth
 ro.ril.oem.btmac         u:object_r:vendor_btmac_prop:s0
 persist.ro.ril.oem.btmac u:object_r:vendor_btmac_prop:s0
+
+# Touch game mode
+vendor.touch.game_mode    u:object_r:vendor_touch_game_prop:s0 exact string
