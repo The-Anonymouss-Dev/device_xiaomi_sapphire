@@ -267,18 +267,6 @@ on property:init.svc.vendor.per_mgr=running
 on property:sys.shutdown.requested=*
     stop vendor.per_proxy
 
-# TouchPad settings for tp_grip_area
-	on property:sys.tp.grip_enable=0
-	write /proc/tp_grip_area 0
-	on property:sys.tp.grip_enable=1
-	write /proc/tp_grip_area 1
-	on property:sys.tp.grip_enable=90
-	write /proc/tp_grip_area 90
-	on property:sys.tp.grip_enable=180
-	write /proc/tp_grip_area 180
-	on property:sys.tp.grip_enable=270
-	write /proc/tp_grip_area 270
-
 #display start
 service displayfeature /vendor/bin/displayfeature
     class late_start
