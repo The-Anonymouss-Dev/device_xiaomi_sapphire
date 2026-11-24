@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="charging_modes_title">Charging modes</string>
+    <string name="charging_modes_summary">33 W, 18 W or 10 W charging</string>
+
+    <string name="status_not_charging">Not charging</string>
+    <string name="hero_charging">Charging</string>
+    <string name="hero_full">Full</string>
+    <string name="hero_paused">Paused at 80%</string>
+    <!-- Short form in the power chip -->
+    <string name="hero_paused_short">Paused</string>
+    <string name="hero_paused_details">5 V is normal while paused · resumes below 75%</string>
+    <string name="hero_connected">Charger connected</string>
+    <string name="hero_temp">Temp</string>
+    <string name="hero_full_in">Full in</string>
+    <string name="hero_to80">80% in</string>
+    <!-- e.g. "4.40 A · 4.43 V" -->
+    <string name="hero_details">%1$s A · %2$s V</string>
+    <!-- e.g. "24 min" -->
+    <string name="hero_minutes">%1$d min</string>
+    <!-- e.g. "1 h 5 min" -->
+    <string name="hero_hours">%1$d h %2$d min</string>
+
+    <string name="mode_category">Charging speed</string>
+    <string name="mode_super_title">Super fast · 33 W</string>
+    <string name="mode_super_summary">Full charger speed</string>
+    <string name="mode_fast_title">Fast · 18 W</string>
+    <string name="mode_fast_summary">Quick and cooler while charging</string>
+    <string name="mode_slow_title">Slow · 10 W</string>
+    <string name="mode_slow_summary">Gentle on the battery, good overnight</string>
+
+    <string name="protection_category">Battery protection</string>
+    <string name="limit80_title">Stop at 80%</string>
+    <string name="limit80_summary">Charging pauses at 80% and resumes below 75%</string>
+
+    <string name="charging_modes_footer">Fast and Slow lower the charging current; the actual speed also depends on the charger. Temperature limits always stay in place.</string>
+</resources>

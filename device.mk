@@ -620,6 +620,10 @@ PRODUCT_PACKAGES += \
 PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.verified_boot.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.verified_boot.xml
 
+# Charging modes
+PRODUCT_PACKAGES += \
+    ChargingModes
+
 # Touch
 PRODUCT_PACKAGES += \
     TouchGrip \

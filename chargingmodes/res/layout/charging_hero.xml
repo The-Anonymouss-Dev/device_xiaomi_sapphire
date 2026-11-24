@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="8dp">
+
+    <org.lineageos.chargingmodes.EmberHaloView
+        android:id="@+id/halo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:importantForAccessibility="no" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:baselineAligned="false">
+
+        <LinearLayout
+            android:id="@+id/chip_power"
+            style="@style/HeroChip">
+            <TextView
+                android:id="@+id/state"
+                style="@style/HeroChipLabel"
+                android:text="@string/status_not_charging" />
+            <TextView
+                android:id="@+id/power"
+                style="@style/HeroChipValue" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/chip_temp"
+            style="@style/HeroChip"
+            android:layout_marginStart="8dp">
+            <TextView
+                style="@style/HeroChipLabel"
+                android:text="@string/hero_temp" />
+            <TextView
+                android:id="@+id/temp"
+                style="@style/HeroChipValue" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/chip_eta"
+            style="@style/HeroChip"
+            android:layout_marginStart="8dp">
+            <TextView
+                android:id="@+id/eta_label"
+                style="@style/HeroChipLabel"
+                android:text="@string/hero_full_in" />
+            <TextView
+                android:id="@+id/eta"
+                style="@style/HeroChipValue" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/details"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:textAppearance="?android:attr/textAppearanceSmall"
+        android:textColor="?android:attr/textColorSecondary" />
+</LinearLayout>

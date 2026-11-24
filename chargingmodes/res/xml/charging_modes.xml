@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:title="@string/charging_modes_title">
+
+    <!-- Live: the halo with the level, power, temperature and time left -->
+    <org.lineageos.chargingmodes.HeroPreference
+        android:key="status" />
+
+    <PreferenceCategory
+        android:key="mode_category"
+        android:title="@string/mode_category">
+
+        <com.android.settingslib.widget.SelectorWithWidgetPreference
+            android:key="super"
+            android:icon="@drawable/ic_charge_super"
+            android:title="@string/mode_super_title"
+            android:summary="@string/mode_super_summary"
+            android:persistent="false" />
+
+        <com.android.settingslib.widget.SelectorWithWidgetPreference
+            android:key="fast"
+            android:icon="@drawable/ic_charge_fast"
+            android:title="@string/mode_fast_title"
+            android:summary="@string/mode_fast_summary"
+            android:persistent="false" />
+
+        <com.android.settingslib.widget.SelectorWithWidgetPreference
+            android:key="slow"
+            android:icon="@drawable/ic_charge_slow"
+            android:title="@string/mode_slow_title"
+            android:summary="@string/mode_slow_summary"
+            android:persistent="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        android:key="protection_category"
+        android:title="@string/protection_category">
+
+        <SwitchPreferenceCompat
+            android:key="limit80"
+            android:icon="@drawable/ic_charge_limit"
+            android:title="@string/limit80_title"
+            android:summary="@string/limit80_summary"
+            android:persistent="false" />
+    </PreferenceCategory>
+
+    <com.android.settingslib.widget.FooterPreference
+        android:key="footer"
+        android:title="@string/charging_modes_footer"
+        android:selectable="false" />
+
+</PreferenceScreen>

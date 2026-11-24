@@ -27,3 +27,6 @@ allow system_app proc_tp_grip_area:file w_file_perms;
 
 # TouchGrip: touch game mode while a game is in the foreground
 set_prop(system_app, vendor_touch_game_prop)
+
+# ChargingModes: Settings > Battery > Charging modes
+set_prop(system_app, vendor_charge_mode_prop)

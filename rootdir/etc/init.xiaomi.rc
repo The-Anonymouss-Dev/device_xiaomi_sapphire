@@ -34,6 +34,46 @@ on property:init.svc.audioserver=running
 on property:init.svc.vendor.audio-hal=running
     write /dev/cpuset/audio-app/cgroup.procs ${init.svc_debug_pid.vendor.audio-hal}
 
+# Charging modes (Settings > Battery > Charging modes, chargingmodes/)
+#
+# fast and slow cap the charging current with the charger driver's own
+# restrict_chg / restrict_cur switch (it sets the charge current to
+# restrict_cur, checked on the device, kept across replugs): 4.5 A and
+# 2.5 A, about 18 W and 10 W at the battery;
+# super drops the cap and puts restrict_cur back to its default. They only
+# lower the current, the thermal limits stay in charge. limit80 is the
+# xm_smart_chg night_charging switch: pause at 80%, resume below 75%.
+# Applied again on boot_completed in case the charger nodes were not there
+# yet when the persistent properties were loaded.
+on property:persist.vendor.charge.mode=super
+    write /sys/class/qcom-battery/restrict_chg 0
+    write /sys/class/qcom-battery/restrict_cur 1000000
+
+on property:persist.vendor.charge.mode=fast
+    write /sys/class/qcom-battery/restrict_cur 4500000
+    write /sys/class/qcom-battery/restrict_chg 1
+
+on property:persist.vendor.charge.mode=slow
+    write /sys/class/qcom-battery/restrict_cur 2500000
+    write /sys/class/qcom-battery/restrict_chg 1
+
+on property:sys.boot_completed=1 && property:persist.vendor.charge.mode=fast
+    write /sys/class/qcom-battery/restrict_cur 4500000
+    write /sys/class/qcom-battery/restrict_chg 1
+
+on property:sys.boot_completed=1 && property:persist.vendor.charge.mode=slow
+    write /sys/class/qcom-battery/restrict_cur 2500000
+    write /sys/class/qcom-battery/restrict_chg 1
+
+on property:persist.vendor.charge.limit80=true
+    write /sys/class/power_supply/battery/night_charging 1
+
+on property:persist.vendor.charge.limit80=false
+    write /sys/class/power_supply/battery/night_charging 0
+
+on property:sys.boot_completed=1 && property:persist.vendor.charge.limit80=true
+    write /sys/class/power_supply/battery/night_charging 1
+
 # For the NFC variant (sapphiren)
 on post-fs && property:ro.boot.hwname=sapphiren
     start stflashtool

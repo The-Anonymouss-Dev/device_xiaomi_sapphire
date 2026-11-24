@@ -33,3 +33,7 @@ persist.ro.ril.oem.btmac u:object_r:vendor_btmac_prop:s0
 
 # Touch game mode
 vendor.touch.game_mode    u:object_r:vendor_touch_game_prop:s0 exact string
+
+# Charging modes
+persist.vendor.charge.mode       u:object_r:vendor_charge_mode_prop:s0 exact enum super fast slow
+persist.vendor.charge.limit80    u:object_r:vendor_charge_mode_prop:s0 exact bool

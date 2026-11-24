@@ -19,3 +19,6 @@ vendor_public_prop(vendor_wifimac_prop)
 
 # Touch game mode, set by TouchGrip (system_app)
 vendor_public_prop(vendor_touch_game_prop)
+
+# Charging modes, set by ChargingModes (system_app), applied by init
+vendor_public_prop(vendor_charge_mode_prop)
