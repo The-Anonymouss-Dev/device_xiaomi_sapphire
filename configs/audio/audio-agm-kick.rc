@@ -11,6 +11,10 @@
 # start the service declaring it. Declare it here on a helper that waits
 # for the ADSP to run and exits; then restart the HAL, whose AGM init now
 # finds the DSP. Boots where AGM comes up are not touched.
+#
+# Imported from init.xiaomi.rc and kept out of /vendor/etc/init: the
+# build's host_init_verifier only knows interfaces built from a
+# hidl_interface module, and AGMIPC@1.0 comes as a prebuilt blob here.
 service vendor.audio-agm-kick /vendor/bin/vendor.adsp-wait.sh 0
     interface vendor.qti.hardware.AGMIPC@1.0::IAGM default
     user root

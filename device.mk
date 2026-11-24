@@ -88,7 +88,8 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/audio/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
     $(LOCAL_PATH)/configs/audio/audio_effects.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_effects.xml \
     $(LOCAL_PATH)/configs/audio/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio/audio_policy_configuration.xml \
-    $(LOCAL_PATH)/configs/audio/kvh2xml.xml:$(TARGET_COPY_OUT_VENDOR)/etc/kvh2xml.xml \n    $(LOCAL_PATH)/configs/audio/init.audio-wait.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/init.audio-wait.rc
+    $(LOCAL_PATH)/configs/audio/kvh2xml.xml:$(TARGET_COPY_OUT_VENDOR)/etc/kvh2xml.xml \
+    $(LOCAL_PATH)/configs/audio/audio-agm-kick.rc:$(TARGET_COPY_OUT_VENDOR)/etc/audio/audio-agm-kick.rc
 
 # Mic noise suppression (PAL): 2-mic Fluence Endfire by default; the AI (nn)
 # and stock variants are selected with persist.vendor.audio.mic_ns, see
