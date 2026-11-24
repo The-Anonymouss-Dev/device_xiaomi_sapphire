@@ -84,6 +84,14 @@ constexpr int64_t kStuckFrameworkReleasedMs = 3000;
 constexpr int64_t kMaxFingerDownMs = 10000;
 constexpr int kWatchdogPollMs = 500;
 constexpr int64_t kLhbmRecheckMs = 150;
+// The panel driver builds the local HBM command from the backlight level at
+// that moment. A touch that wakes the screen asks for local HBM while the
+// backlight is still 0 (the panel is powering on), and the spot then stays
+// too dark for the sensor (first images with 0-200 key points instead of
+// ~460, so the first touch after screen-off failed). Wait for the backlight
+// before switching local HBM on; it comes ~10 ms after the panel is enabled.
+constexpr int64_t kLhbmWaitPollMs = 10;
+constexpr int64_t kLhbmWaitMaxMs = 1000;
 // One-touch unlock: the press must have started at most this long before
 // the display woke up, and the capture starts this long after the wake so
 // the panel can take the local HBM request.
@@ -334,6 +342,8 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
     std::mutex disp_mutex_;
     std::atomic<bool> mLhbmOn{false};  // last local HBM request
     std::atomic<int64_t> mLhbmRecheckMs{0};  // when to repeat HBM-off, 0 = none
+    std::atomic<int64_t> mLhbmWaitAtMs{0};    // next backlight check for HBM-on, 0 = none
+    std::atomic<int64_t> mLhbmWaitSinceMs{0};
 
     std::thread rawThread_;
     std::thread dispThread_;
@@ -432,15 +442,56 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
             // e.g. raw press first, then the framework sees the same touch.
             if (source == Source::FRAMEWORK) mSource = source;
             // GOOD may have switched the local HBM off already.
-            if (!mLhbmOn) setLocalHbm(true);
+            if (!mLhbmOn) requestLocalHbmOn();
             return;
         }
         mFingerDown = true;
         mSource = source;
         mDownMs = nowMs();
-        mFingerDownWanted.store(true);
         setTouchFingerDown(true);
-        setLocalHbm(true);
+        requestLocalHbmOn();
+        // On a wake-up touch the HAL hears about the finger only once the
+        // spot is lit (checkLhbmWait), as on a touch with the screen on.
+        if (mLhbmWaitAtMs.load() == 0) mFingerDownWanted.store(true);
+    }
+
+    // Local HBM on, once the backlight is up (see kLhbmWaitPollMs).
+    void requestLocalHbmOn() {
+        if (readBrightness() != 0) {
+            mLhbmWaitAtMs.store(0);
+            setLocalHbm(true);
+            return;
+        }
+        int64_t now = nowMs();
+        if (mLhbmWaitAtMs.load() == 0) {
+            mLhbmWaitSinceMs.store(now);
+            LOG(INFO) << "Backlight still off; local HBM waits for it";
+        }
+        mLhbmWaitAtMs.store(now + kLhbmWaitPollMs);
+        kickRawThread();
+    }
+
+    // Runs on the raw thread while requestLocalHbmOn() is waiting.
+    void checkLhbmWait(int64_t now) {
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (mLhbmWaitAtMs.load() == 0) return;
+            if (!mFingerDown) {
+                mLhbmWaitAtMs.store(0);
+                return;
+            }
+            int64_t waited = now - mLhbmWaitSinceMs.load();
+            if (readBrightness() == 0 && waited < kLhbmWaitMaxMs) {
+                mLhbmWaitAtMs.store(now + kLhbmWaitPollMs);
+                return;
+            }
+            LOG(INFO) << "Local HBM on after waiting " << waited
+                      << " ms for the backlight -> finger down";
+            mLhbmWaitAtMs.store(0);
+            setLocalHbm(true);
+            mFingerDownWanted.store(true);
+        }
+        syncHalFingerState();
     }
 
     bool endFingerDownLocked() {
@@ -569,6 +620,7 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
             }
             if (releaseDeadline) consider(releaseDeadline - now);
             if (int64_t r = mLhbmRecheckMs.load()) consider(r - now);
+            if (int64_t h = mLhbmWaitAtMs.load()) consider(h - now);
             if (int64_t w = mWakeContinueAtMs.load()) consider(w - now);
             if (int64_t l = mLockoutUntilMs.load()) consider(l - now);
             {
@@ -655,6 +707,9 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
                 std::lock_guard<std::mutex> lock(state_mutex_);
                 updateFodScanLocked();
             }
+
+            // Local HBM waiting for the backlight (see requestLocalHbmOn).
+            if (int64_t h = mLhbmWaitAtMs.load(); h && now >= h) checkLhbmWait(now);
 
             // Repeated HBM-off (see endFingerDownLocked).
             if (int64_t r = mLhbmRecheckMs.load(); r && now >= r) {
@@ -791,6 +846,7 @@ class XiaomiSm6225UdfpsHandler : public UdfpsHandler {
     }
 
     void setLocalHbm(bool on) {
+        if (!on) mLhbmWaitAtMs.store(0);  // a pending HBM-on is no longer wanted
         std::lock_guard<std::mutex> lock(disp_mutex_);
         mLhbmOn = on;
         if (disp_fd_.get() < 0) return;
