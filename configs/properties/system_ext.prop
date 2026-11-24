@@ -3,6 +3,16 @@ ro.audio.ihaladaptervendorextension_enabled=true
 
 # Dalvik
 dalvik.vm.dex2oat64.enabled=true
+# Installs and background dexopt on the silver cores only, so the gold
+# cores stay free for the UI: compiling a large app made 57 % of the shade
+# frames jank (99th percentile 200 ms) on all eight cores, 21 % (61 ms)
+# on 0-3, at about 3x the compile time. Boot dexopt keeps all cores.
+dalvik.vm.dex2oat-cpu-set=0,1,2,3
+dalvik.vm.dex2oat-threads=4
+dalvik.vm.background-dex2oat-cpu-set=0,1,2,3
+dalvik.vm.background-dex2oat-threads=4
+dalvik.vm.boot-dex2oat-cpu-set=0,1,2,3,4,5,6,7
+dalvik.vm.boot-dex2oat-threads=8
 
 # Bluetooth
 bluetooth.device.class_of_device=90,2,12
