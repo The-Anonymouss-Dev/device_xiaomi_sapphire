@@ -74,6 +74,14 @@ on property:persist.vendor.charge.limit80=false
 on property:sys.boot_completed=1 && property:persist.vendor.charge.limit80=true
     write /sys/class/power_supply/battery/night_charging 1
 
+# The smb5 time_to_full_now is unusable: 0 s at 98 % while charging at
+# 1 A, and 22 min to an hour at 99 % on other charges. The framework shows
+# it as is whenever it is readable, so hide it from the health HAL (user
+# system, started with class hal at boot); BatteryStats then estimates the
+# time from the measured charge steps.
+on early-boot
+    chmod 0000 /sys/class/power_supply/battery/time_to_full_now
+
 # For the NFC variant (sapphiren)
 on post-fs && property:ro.boot.hwname=sapphiren
     start stflashtool
