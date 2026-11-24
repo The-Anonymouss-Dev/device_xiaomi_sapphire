@@ -24,16 +24,24 @@
          in hardware. -->
     <bool name="config_setColorTransformAccelerated">true</bool>
 
-    <!-- Indicate available ColorDisplayManager.COLOR_MODE_xxx. -->
+    <!-- Indicate available ColorDisplayManager.COLOR_MODE_xxx.
+         The panel's QDCM calibration carries Xiaomi's tuned modes as vendor
+         render intents on its native (wide) gamut; SurfaceFlinger passes the
+         value straight to the HWC. The first entry is the default, also for
+         devices that still have NATURAL/BOOSTED saved from before.
+         258 = smart_MC: native gamut, mild picture adjustment (Vivid)
+         256 = hal_native: native gamut, no adjustment (Saturated)
+         257 = hal_srgb: PCC mapped to sRGB (Standard) -->
     <integer-array name="config_availableColorModes">
-        <item>0</item> <!-- COLOR_MODE_NATURAL -->
-        <item>1</item> <!-- COLOR_MODE_BOOSTED -->
+        <item>258</item>
+        <item>256</item>
+        <item>257</item>
     </integer-array>
 
     <!-- Color mode to use when accessibility transforms are enabled. This color mode must be
          supported by the device, but not necessarily appear in config_availableColorModes. The
          regularly selected color mode will be used if this value is negative. -->
-    <integer name="config_accessibilityColorMode">1</integer>
+    <integer name="config_accessibilityColorMode">0</integer>
 
     <!-- The following two arrays specify which color space to use for display composition when a
          certain color mode is active.
@@ -48,10 +56,14 @@
          currently set composition color space will not be modified.-->
     <integer-array name="config_displayCompositionColorModes">
         <item>0</item> <!-- COLOR_MODE_NATURAL   -->
-        <item>1</item> <!-- COLOR_MODE_BOOSTED   -->
+        <item>258</item> <!-- Vivid     -->
+        <item>256</item> <!-- Saturated -->
+        <item>257</item> <!-- Standard  -->
     </integer-array>
 
     <integer-array name="config_displayCompositionColorSpaces">
+        <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
+        <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
         <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
         <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
     </integer-array>
