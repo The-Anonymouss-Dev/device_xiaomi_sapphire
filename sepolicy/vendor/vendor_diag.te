@@ -7,3 +7,13 @@ init_daemon_domain(vendor_diag)
 # Fixes: avc: denied { create } for comm="diag-router" scontext=u:r:vendor_diag:s0 tcontext=u:r:vendor_diag:s0 tclass=netlink_kobject_uevent_socket
 allow vendor_diag self:netlink_kobject_uevent_socket create_socket_perms_no_ioctl;
 
+
+# The socket rule above is not enough: diag-router then dies on the next
+# denials below, exits with status 1 and init restarts it every 5 s, which
+# also runs flags_health_check UPDATABLE_CRASHING on every restart.
+# qipcrtr: talking to the remote processors over QRTR.
+allow vendor_diag self:qipcrtr_socket create_socket_perms;
+# functionfs: it looks for the USB diag function at start.
+allow vendor_diag functionfs:dir r_dir_perms;
+# It reads the hwservicemanager ready prop while waiting for HALs.
+get_prop(vendor_diag, hwservicemanager_prop)
