@@ -31,11 +31,13 @@
          devices that still have NATURAL/BOOSTED saved from before.
          258 = smart_MC: native gamut, mild picture adjustment (Vivid)
          256 = hal_native: native gamut, no adjustment (Saturated)
-         257 = hal_srgb: PCC mapped to sRGB (Standard) -->
+         0 = NATURAL: framework-managed sRGB (Standard). The QDCM hal_srgb
+         mode (257) mixes about a quarter of green into red on its own, so
+         reds and skin turn orange; it is not offered. -->
     <integer-array name="config_availableColorModes">
         <item>258</item>
         <item>256</item>
-        <item>257</item>
+        <item>0</item>
     </integer-array>
 
     <!-- Color mode to use when accessibility transforms are enabled. This color mode must be
@@ -55,14 +57,12 @@
          If a color mode does not have a corresponding color space specified in this array, the
          currently set composition color space will not be modified.-->
     <integer-array name="config_displayCompositionColorModes">
-        <item>0</item> <!-- COLOR_MODE_NATURAL   -->
+        <item>0</item> <!-- COLOR_MODE_NATURAL (Standard) -->
         <item>258</item> <!-- Vivid     -->
         <item>256</item> <!-- Saturated -->
-        <item>257</item> <!-- Standard  -->
     </integer-array>
 
     <integer-array name="config_displayCompositionColorSpaces">
-        <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
         <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
         <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
         <item>0</item> <!-- COLOR_MODE_DEFAULT    -->
