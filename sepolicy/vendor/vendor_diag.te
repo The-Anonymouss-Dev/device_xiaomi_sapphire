@@ -13,6 +13,9 @@ allow vendor_diag self:netlink_kobject_uevent_socket create_socket_perms_no_ioct
 # also runs flags_health_check UPDATABLE_CRASHING on every restart.
 # qipcrtr: talking to the remote processors over QRTR.
 allow vendor_diag self:qipcrtr_socket create_socket_perms;
+# Only the msm_sock_ipc ioctls, as the vendor policy does for QRTR users;
+# an unrestricted ioctl would trip the socket ioctl neverallowxperm.
+allowxperm vendor_diag self:qipcrtr_socket ioctl { 0xc300-0xc305 };
 # functionfs: it looks for the USB diag function at start.
 allow vendor_diag functionfs:dir r_dir_perms;
 # It reads the hwservicemanager ready prop while waiting for HALs.
