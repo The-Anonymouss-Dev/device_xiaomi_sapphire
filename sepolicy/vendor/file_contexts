@@ -12,7 +12,6 @@
 /sys/devices/platform/soc/soc:fpc1020(/.*?)                             u:object_r:vendor_sysfs_fps_attr:s0
 
 # Fingerprint devices 
-/dev/goodix_fp                                                          u:object_r:vendor_fingerprint_device:s0
 /dev/xiaomi-fp                                                          u:object_r:vendor_fingerprint_device:s0
 
 # Fingerprint HAL
@@ -24,7 +23,6 @@
 
 # Mac Address
 /data/vendor/mac_addr(/.*)? u:object_r:vendor_mac_vendor_data_file:s0
-/vendor/bin/nv_mac u:object_r:vendor_wcnss_service_exec:s0
 
 # NFC
 /vendor/bin/STFlashTool                                                 u:object_r:stflashtool_exec:s0
@@ -41,12 +39,10 @@
 /sys/devices/platform/soc/4804000.ufshc/host0/target0:0:0/0:0:0:0/block/sda/queue/discard_max_bytes u:object_r:vendor_sysfs_scsi_host:s0
 
 # sysfs read_ahead_kb files
-/sys/devices/platform/soc/4744000.sdhci/mmc_host/mmc0/mmc0:0001/block/mmcblk0/mmcblk0rpmb/queue/read_ahead_kb u:object_r:vendor_sysfs_mmc_host:s0
 /sys/devices/platform/soc/soc:qcom,ipa_fws@[a-f0-9]+/subsys[0-9]+/name  u:object_r:vendor_sysfs_data:s0
 
 # Sensors
 /vendor/bin/hw/android\.hardware\.sensors-service\.xiaomi-multihal  u:object_r:hal_sensors_default_exec:s0
-/sys/devices/platform/soc/soc:qcom,dsi-display-primary/mi_display/disp-DSI-0/dynamic_fps                                        u:object_r:vendor_sysfs_graphics:s0
 
 # Label device node of tee_device
 /dev/tee0 u:object_r:tee_device:s0
