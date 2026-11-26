@@ -103,12 +103,6 @@ on post-fs-data
     chown system system /sys/class/mi_display/disp-DSI-0/max_brightness_clone
     chmod 0664 /sys/class/mi_display/disp-DSI-0/max_brightness_clone
 
-    # Display feature sysfs node for penel1
-    chown system system /sys/class/mi_display/disp-DSI-1/brightness_clone
-    chmod 0664 /sys/class/mi_display/disp-DSI-1/brightness_clone
-    chown system system /sys/class/mi_display/disp-DSI-1/max_brightness_clone
-    chmod 0664 /sys/class/mi_display/disp-DSI-1/max_brightness_clone
-
 # Creat directory used for touchpanel_selftest
     mkdir /data/vendor/touchpad
     chown system system /data/vendor/touchpad
@@ -119,8 +113,6 @@ on post-fs-data
     chmod 666 /dev/mi_display/disp_feature
 
 #flashlight permission
-    chmod 0660 /sys/class/leds/led:torch/brightness
-    chown system system /sys/class/leds/led:torch/brightness
     chmod 0660 /sys/class/leds/flashlight-back/brightness
     chown system system /sys/class/leds/flashlight-back/brightness
     chmod 0660 /sys/class/leds/vibrator/state
@@ -132,22 +124,6 @@ on post-fs-data
     # The ERM motor needs more than the default 3000 mV to spin up within
     # short haptic clicks; 3400 mV feels crisp (the driver allows 3544)
     write /sys/class/leds/vibrator/vmax_mv 3400
-    chmod 0660 /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/state
-    chown system system /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/state
-    chmod 0660 /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/duration
-    chown system system /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/duration
-    chmod 0660 /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/activate
-    chown system system /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/activate
-
-#odm-battery
-   chmod 0664 /sys/class/qcom-battery/odm_battery/batt_manufacturer
-   chown system system /sys/class/qcom-battery/odm_battery/batt_manufacturer
-   chmod 0664 /sys/class/qcom-battery/odm_battery/cc_manufacturer
-   chown system system /sys/class/qcom-battery/odm_battery/cc_manufacturer
-   chmod 0664 /sys/class/qcom-battery/odm_battery/cp_manufacturer
-   chown system system /sys/class/qcom-battery/odm_battery/cp_manufacturer
-   chmod 0664 /sys/class/qcom-battery/odm_battery/ds_manufacturer
-   chown system system /sys/class/qcom-battery/odm_battery/ds_manufacturer
 
 #add for ssr
     chmod 0666 /sys/devices/platform/soc/b300000.remoteproc-cdsp/remoteproc/remoteproc1/recovery
@@ -173,12 +149,10 @@ on post-fs-data
     chmod 0666 /data/vendor/camera/ultra_w[3264]_h[2448].NV12
 # Create miui dualcam calibration file --qiankaifeng-20221117 end
 
-
 on early-boot
     start vendor.sensors
 
 on boot
-    write /dev/cpuset/audio-app/cpus 4-7
     chown system system /sys/class/thermal/thermal_message/boost
     chmod 0664 /sys/class/thermal/thermal_message/boost
     chown system system /sys/class/thermal/thermal_message/balance_mode
@@ -194,8 +168,6 @@ on boot
     # Xiaomi touch
     chown system system /dev/xiaomi-touch
     chmod 0660 /dev/xiaomi-touch
-    chown system system /sys/class/touch/touch_dev/fod_longpress_gesture_enabled
-    chmod 0660 /sys/class/touch/touch_dev/fod_longpress_gesture_enabled
 
     # DT2W
     chown system system /proc/tp_gesture

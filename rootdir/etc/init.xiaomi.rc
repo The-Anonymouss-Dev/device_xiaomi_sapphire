@@ -83,9 +83,6 @@ on boot && property:ro.boot.hwname=sapphire
     setprop ro.vendor.se.type ""
 
 on boot
-    # Goodix sensor (if you have dual sensor support)
-    chmod 0666 /dev/goodix_fp
-    chown system system /dev/goodix_fp
     
     # Xiaomi fingerprint device
     chmod 0666 /dev/xiaomi-fp
