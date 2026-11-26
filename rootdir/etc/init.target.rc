@@ -129,6 +129,9 @@ on post-fs-data
     chown system system /sys/class/leds/vibrator/duration
     chmod 0660 /sys/class/leds/vibrator/activate
     chown system system /sys/class/leds/vibrator/activate
+    # The ERM motor needs more than the default 3000 mV to spin up within
+    # short haptic clicks; 3400 mV feels crisp (the driver allows 3544)
+    write /sys/class/leds/vibrator/vmax_mv 3400
     chmod 0660 /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/state
     chown system system /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/state
     chmod 0660 /sys/devices/platform/soc/soc:pwm_vibrator/leds/vibrator/duration
