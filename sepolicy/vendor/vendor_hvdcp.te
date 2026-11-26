@@ -1,5 +1,9 @@
 allow vendor_hvdcp sysfs_batteryinfo:dir search;
-allow vendor_hvdcp kmsg_device:chr_file { getattr write open };
+# hvdcp_opti logs its battery health (SOH) writes to the kernel log every
+# few seconds; the bms SOH/ESR nodes it targets do not exist on this
+# kernel, so that is several hundred failure lines an hour. Keep it out of
+# dmesg; it does not need the kernel log to run QC3 charging.
+dontaudit vendor_hvdcp kmsg_device:chr_file { getattr write open };
 r_dir_file(vendor_hvdcp, vendor_sysfs_battery_supply)
 r_dir_file(vendor_hvdcp, vendor_sysfs_iio)
 rw_dir_file(vendor_hvdcp, sysfs)
