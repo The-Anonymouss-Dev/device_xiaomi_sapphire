@@ -447,7 +447,6 @@ PRODUCT_PACKAGES += \
     FrameworksResCommon \
     FrameworksResTarget \
     SystemUIResCommon \
-    TelecommResCommon \
     TelephonyResCommon \
     WifiResCommon \
     WifiResTarget \
