@@ -36,3 +36,9 @@ allow hal_power_default self:global_capability_class_set sys_nice;
 
 # KProfiles: the profile chosen in Settings
 get_prop(hal_power_default, vendor_kprofile_prop)
+
+# ADPF sets uclamp (sched_setattr) on the threads of each hint session:
+# app render threads, SurfaceFlinger and system_server. App processes
+# carry MLS categories, so the HAL also has to be an MLS trusted subject.
+allow hal_power_default { appdomain surfaceflinger system_server }:process setsched;
+typeattribute hal_power_default mlstrustedsubject;
