@@ -1,5 +1,12 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// Device modes for the libperfmgr power HAL: double tap to wake and the
+// KProfiles switch (persist.vendor.kprofile.mode)
 cc_library_static {
-    name: "libpowermode-ext-sapphire",
+    name: "libperfmgr-ext-sapphire",
     defaults: [
         "android.hardware.power-ndk_shared",
     ],
@@ -9,5 +16,11 @@ cc_library_static {
     ],
     shared_libs: [
         "libbase",
+        "libperfmgr",
+        "libutils",
+    ],
+    // Headers that perfmgr/HintManager.h pulls in
+    static_libs: [
+        "powerhal_flags-aconfig-cc",
     ],
 }

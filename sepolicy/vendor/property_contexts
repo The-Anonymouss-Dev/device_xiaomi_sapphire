@@ -37,3 +37,6 @@ vendor.touch.game_mode    u:object_r:vendor_touch_game_prop:s0 exact string
 # Charging modes
 persist.vendor.charge.mode       u:object_r:vendor_charge_mode_prop:s0 exact enum super fast slow
 persist.vendor.charge.limit80    u:object_r:vendor_charge_mode_prop:s0 exact bool
+
+# KProfiles
+persist.vendor.kprofile.mode     u:object_r:vendor_kprofile_prop:s0 exact enum battery balanced performance

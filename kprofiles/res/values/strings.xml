@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="kprofiles_title">Performance profile</string>
+    <string name="kprofiles_summary">Battery, Balanced or Performance</string>
+    <string name="tile_label">Profile</string>
+
+    <string name="profile_category">Profile</string>
+    <string name="profile_battery_title">Battery</string>
+    <string name="profile_battery_summary">Lower CPU and GPU limits for longer battery life</string>
+    <string name="profile_balanced_title">Balanced</string>
+    <string name="profile_balanced_summary">Stock tuning, boosts only when you touch or open apps</string>
+    <string name="profile_performance_title">Performance</string>
+    <string name="profile_performance_summary">Higher CPU and GPU floors for smoother games, uses more battery</string>
+
+    <string name="kprofiles_footer">The profile applies while the screen is on and is kept after a reboot. Battery Saver and the temperature limits still apply on top of it.</string>
+</resources>

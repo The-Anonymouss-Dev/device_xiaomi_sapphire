@@ -30,7 +30,7 @@
 /vendor/bin/hw/android\.hardware\.secure_element@1\.2-service           u:object_r:hal_secure_element_default_exec:s0
 
 # Power
-/vendor/bin/hw/android\.hardware\.power-service-qti                     u:object_r:hal_power_default_exec:s0
+/vendor/bin/hw/android\.hardware\.power-service\.lineage-libperfmgr   u:object_r:hal_power_default_exec:s0
 
 # Label read_ahead_kb in /data partition
 /sys/devices/platform/soc/4804000.ufshc/host0/target0:0:0/0:0:0:0/block/sda/queue/read_ahead_kb u:object_r:vendor_sysfs_scsi_host:s0

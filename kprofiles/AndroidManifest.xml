@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="org.lineageos.kprofiles"
+    android:sharedUserId="android.uid.system">
+
+    <application
+        android:label="@string/kprofiles_title"
+        android:defaultToDeviceProtectedStorage="true"
+        android:directBootAware="true"
+        android:theme="@style/Theme.SubSettingsBase">
+
+        <!-- Shown in Settings > Battery, and on a long press of the tile -->
+        <activity
+            android:name=".KProfilesActivity"
+            android:label="@string/kprofiles_title"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.android.settings.action.IA_SETTINGS" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
+            </intent-filter>
+            <meta-data
+                android:name="com.android.settings.category"
+                android:value="com.android.settings.category.ia.battery" />
+            <meta-data
+                android:name="com.android.settings.summary"
+                android:resource="@string/kprofiles_summary" />
+        </activity>
+
+        <service
+            android:name=".KProfilesTileService"
+            android:label="@string/tile_label"
+            android:icon="@drawable/ic_kprofile_balanced"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

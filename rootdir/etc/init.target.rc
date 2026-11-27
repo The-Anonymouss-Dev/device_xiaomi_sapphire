@@ -267,6 +267,9 @@ service panel_color /vendor/bin/panelcolor_bin
 
 on property:sys.boot_completed=1
     start panel_color
+
+    # libperfmgr only starts applying powerhint.json once this is set
+    setprop vendor.powerhal.init 1
 # add end
 
 #add for btmac property

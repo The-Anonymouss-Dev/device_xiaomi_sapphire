@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<PreferenceScreen
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:title="@string/kprofiles_title">
+
+    <PreferenceCategory
+        android:key="profile_category"
+        android:title="@string/profile_category">
+
+        <com.android.settingslib.widget.SelectorWithWidgetPreference
+            android:key="battery"
+            android:icon="@drawable/ic_kprofile_battery"
+            android:title="@string/profile_battery_title"
+            android:summary="@string/profile_battery_summary"
+            android:persistent="false" />
+
+        <com.android.settingslib.widget.SelectorWithWidgetPreference
+            android:key="balanced"
+            android:icon="@drawable/ic_kprofile_balanced"
+            android:title="@string/profile_balanced_title"
+            android:summary="@string/profile_balanced_summary"
+            android:persistent="false" />
+
+        <com.android.settingslib.widget.SelectorWithWidgetPreference
+            android:key="performance"
+            android:icon="@drawable/ic_kprofile_performance"
+            android:title="@string/profile_performance_title"
+            android:summary="@string/profile_performance_summary"
+            android:persistent="false" />
+    </PreferenceCategory>
+
+    <com.android.settingslib.widget.FooterPreference
+        android:key="footer"
+        android:title="@string/kprofiles_footer"
+        android:selectable="false" />
+
+</PreferenceScreen>

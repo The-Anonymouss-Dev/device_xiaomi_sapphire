@@ -478,14 +478,18 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/perf/perfconfigstore.xml:$(TARGET_COPY_OUT_VENDOR)/etc/perf/perfconfigstore.xml
 
 # Power
+# android.hardware.power is the libperfmgr HAL (ADPF hint sessions, boosts
+# and modes from powerhint.json). The Qualcomm perf HAL stays for vendor
+# clients (camera, display, IOP) and still reads powerhint.xml.
 PRODUCT_PACKAGES += \
-    android.hardware.power-service-qti
+    android.hardware.power-service.lineage-libperfmgr \
+    libqti-perfd-client
 
 PRODUCT_COPY_FILES += \
-    $(LOCAL_PATH)/configs/perf/powerhint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/powerhint.xml
+    $(LOCAL_PATH)/configs/perf/powerhint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/powerhint.xml \
+    $(LOCAL_PATH)/configs/power/powerhint.json:$(TARGET_COPY_OUT_VENDOR)/etc/powerhint.json
 
-$(call soong_config_set,qtipower,mode_ext_lib,//$(LOCAL_PATH):libpowermode-ext-sapphire)
-$(call soong_config_set,qtipower,tap_to_wake_node,/proc/tp_gesture)
+$(call soong_config_set,power_libperfmgr,mode_extension_lib,//$(LOCAL_PATH):libperfmgr-ext-sapphire)
 
 # QMI
 PRODUCT_PACKAGES += \
@@ -551,6 +555,9 @@ PRODUCT_SHIPPING_API_LEVEL := 33
 # Soong namespaces
 PRODUCT_SOONG_NAMESPACES += \
     $(LOCAL_PATH) \
+    hardware/google/interfaces \
+    hardware/google/pixel/power-libperfmgr \
+    hardware/qcom-caf/common/libqti-perfd-client \
     hardware/xiaomi
 
 # Telephony
@@ -623,6 +630,10 @@ PRODUCT_COPY_FILES += \
 # Charging modes
 PRODUCT_PACKAGES += \
     ChargingModes
+
+# KProfiles (Settings > Battery > Performance profile, and a QS tile)
+PRODUCT_PACKAGES += \
+    KProfiles
 
 # Touch
 PRODUCT_PACKAGES += \
