@@ -161,6 +161,10 @@ drm.service.enabled=true
 
 # Display
 debug.mdpcomp.logs=0
+# ADPF hint sessions for SurfaceFlinger and app UI threads (HWUI),
+# handled by the libperfmgr power HAL
+debug.sf.enable_adpf_cpu_hint=true
+debug.hwui.use_hint_manager=true
 debug.sf.enable_hwc_vds=0
 debug.sf.enable_transaction_tracing=false
 debug.sf.defer_refresh_rate_when_off=1
