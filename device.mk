@@ -446,6 +446,7 @@ PRODUCT_PACKAGES += \
     CarrierConfigResCommon \
     FrameworksResCommon \
     FrameworksResTarget \
+    SapphireNcmTetheringOverlay \
     SystemUIResCommon \
     TelephonyResCommon \
     WifiResCommon \
